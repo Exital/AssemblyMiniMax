@@ -1,0 +1,2624 @@
+tps = 177564
+tpb = 177566
+tks = 177560
+tkb = 177562
+lcs 	= 177546
+
+.= torg+3000
+
+main:
+mov pc, sp
+tst -(sp)
+mov #printc, @#20 ; iot trap initialization
+mov #200, @#22
+mov #printc, @#64 ; printer interrupt init
+mov #200, @#66
+mov #100, @#tps ; IE enable
+mov #inp, @#60	;keyboard interupt init
+mov #140, @#62	
+mov #101, @#tks ; IE enable
+mov #clock, @#100
+mov #300, @#102
+mov #input, inputPointer
+add #2, inputPointer
+mov #1, r0
+
+mov rate, partSec			;initializing the partSec label
+
+
+; program starts here
+mov #msgWelcome, -(sp)	;setting up parameters for printf
+mov #newLine, -(sp)		;setting up parameters for printf
+mov #msg$, -(sp)
+mov #3, -(sp)			;setting up parameters for printf
+jsr pc, printf			;printing the messages
+add #10, sp				;remove input from stack
+
+
+jsr pc, damka			;The main game manager, will keep the game running for ever
+halt					;we should never get here, but just in caese.
+
+
+
+
+
+
+
+clock:
+	dec partSec			;decrementing the partSec counter
+	cmp partSec, #0		;checking if a whole sec have passed
+	beq tick				;if it is go to handle that case
+	bis #1, @#tks		;ready flag - in order to get the next input
+	rti
+	
+tick:
+	cmp timeLeft, #0		;if the time has come to an end
+	ble flagUp
+	dec timeLeft
+	mov rate, partSec	;setting up partSec to rate in order to count again
+
+	rti
+
+flagUp:
+	clr @#lcs			;stopping the time
+	mov #1, timeEnded		;if time has ended we are turning on the flag
+	bis #1, @#tks		;ready flag - in order to get the next input
+	rti
+	
+
+
+;moveTime - will print how much time the move took
+;input: no input required
+;output: will be printed on screen
+
+moveTime:
+	mov r0, -(sp)			;keeping the environment balanced
+	mov r1, -(sp)			;keeping the environment balanced
+	
+	mov octTime1, -(sp)		;input for converting
+	cmp CP, #1				;checking if its player 1 turn
+	beq .+6
+	mov octTime2, (sp)		;if not move the octTime2 as parameter
+	sub timeLeft, (sp)		;subtracting the time left
+	mov #msgTimeLeft, -(sp)	;giving parameters for numToAsc
+	jsr pc, numToAsc			;converting to ascii
+	add #4, sp				;removing input from stack
+	
+
+	mov partSec, r0			;initialize r0 with the value of partSec
+	mul #100,r0				;mul r0 on 100
+	sxt r0
+	div rate, r0				;div ro on rate
+	mov r0,r1 				;initialize r1 with the value of r0 : partSec*100/rate
+	sxt r0					;sign extension for devision
+	div #12,r0				;divide r0 in 12 to get the tens digit
+	add #60,r0				;convert r0 to ascii
+	mov #msgRightTime,-(sp)	;push the address of msgRightTime to the stack
+	add #2,(sp)				;go to the string place in the word
+	mov r0,@(sp)			;initialize msgRightTime with the tens digit
+	tst (sp)+				;clear one cell from the stack
+	
+	mov #newLine, -(sp)		;input to print
+	mov #msgwhite, -(sp)		;input to print
+	cmp CP, #1
+	beq .+6
+	mov #msgBlack, (sp)		;if not move the black label
+	mov #msgSpace, -(sp)
+	mov #msgHuman, -(sp)		;giving input to print
+	
+	mov #0, -(sp)			;giving output cell for decideTurn
+	jsr pc, decideTurn		;will check if the current player is human or computer
+	cmp (sp)+, #1			; "1" is for human , "-1" for computer
+	beq .+6
+	mov #msgComputer, (sp)	;moving computer label to print
+	mov #msgMoveTook, -(sp)	;input to print
+	mov #msgTimeLeft, -(sp)	;input to print
+	mov #msgPoint, -(sp)		;input to print
+	mov #msgRightTime, -(sp)	;input to print
+	mov #msgSeconds, -(sp)	;input to print
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #12, -(sp)			
+	jsr pc, printf
+	add #26, sp					;removing input from stack
+	
+	mov (sp)+, r1
+	mov (sp)+, r0
+	
+	rts pc
+
+
+	
+;getMaxWP - will get the best move to be done for the player and its WP 
+;call line: jsr pc, getMaxWP
+;input: in stack (source position address, destination position address, WinParam address)
+;output: updated in the addresses given
+	
+getMaxWP:
+	mov #0, -(sp)				;output allocation srcPos
+	mov #0, -(sp)				;output allocation dstPos
+	mov #0, -(sp)				;output allocation WP value
+	mov Player, -(sp)			;input current player
+	
+	mov timeEnded, -(sp)			;moving the timeEnded flag value to the stack
+	add done, (sp)				;adding the done flag value to the stack
+	cmp (sp)+, #0				;if the sum is not zero we have to escape the recurrsion
+	beq .+10
+	mov SaveLocation, sp			;moving the stack pointer to the return address
+	rts pc
+	
+	jsr pc, recursion	
+	tst (sp)+
+	mov (sp)+, @6(sp) 			;put WP value in address
+	mov (sp)+, @6(sp)			;put dstPos value in address
+	mov (sp)+, @6(sp) 			;put srcPos value in address
+	rts	pc
+
+
+
+currentPlayer: .word 0
+	
+;printStop - will print the stop message
+;input: in stack (0 - tie, 1 - white wins, 2 - black wins, current player by value)
+;also uses the msgWP global variable
+;output: will print the message on screen
+
+printStop:
+	mov r5, -(sp)			;keeping the environment balanced
+	mov 6(sp), r5			;moving the winning input to r5
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #msgWPfor, -(sp)		;giving parameters for printf
+	mov #msgwhite, -(sp)		;giving parameters for printf
+	cmp 12(sp), #1			;checking if this is the white player
+	beq .+6					;skip to #playerIs
+	mov #msgblack, (sp)		;giving parameters for printf
+	mov #playerIs, -(sp)		;giving parameters for printf
+	mov #msgWP, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	cmp r5, #0				;checking if its a tie
+	beq printTie
+	mov #msgWhite, -(sp)		;giving parameters for printf
+	cmp r5, #1				;checking if the winner is white
+	beq .+6					;if it is move forward
+	mov #msgBlack, (sp)		;giving parameters for printf
+	mov #msgPlayerWins, -(sp)	;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #msg$, -(sp)			;giving parameters for printf
+	mov #12, -(sp)			;giving parameters for printf
+	jsr pc, printf			;printing input from stack
+	add #26, sp				;removing input from stack
+	mov (sp)+, r5			;restoring r5 value
+	rts pc
+	
+
+printTie:
+	mov #msgTie, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #msg$, -(sp)			;giving parameters for printf	
+	mov #11, -(sp)			;giving parameters for printf
+	jsr pc, printf			;printing all labels in stack
+	add #24, sp				;removing input from stack
+	mov (sp)+, r5			;restoring r5 value
+	rts pc	
+		
+
+;findMove - will return the next move possible
+;call line: jsr pc, findMove
+;input: in stack (last src, last dst, Board by address, player by value)
+;output: in stack (dst, src)
+findMove:
+	mov r0, -(sp)							;keeping the environment balanced
+	mov r1, -(sp)							;keeping the environment balanced
+	mov r2, -(sp)							;keeping the environment balanced
+	mov r3, -(sp)							;keeping the environment balanced
+	mov 12(sp), currentPlayer					;updating the current player label
+	mov 14(sp), BoardAddress					;updating the board address label
+	mov #200, BoardEnd						;moving constant 200 to the label
+	add BoardAddress, BoardEnd					;adding 200 to the board address to find its end
+	asl 16(sp)								;multiplying the index of dst by 2
+	asl 20(sp)								;multiplying the index of dst by 2
+	add BoardAddress, 16(sp)					;adding the start address of board to the double index to get the address
+	add BoardAddress, 20(sp)					;adding the start address of board to the double index to get the address
+	mov 20(sp), r1 							;get the address from stack into r1
+	sub #Board, r1
+	sxt r0									;use sign extension for dividing
+	div #20, r0								;r1 now holds the number of column of the src
+	mov #WhitePlayerMov, r0 					;r0 is initialized to white player movement arrays
+	cmp currentPlayer, #1						;if the player is white keep going else replace the arrays
+	beq chkLstMov								;go to check if last move was left
+	mov #BlackPlayerMov, r0					;initialized the r0 to the black movement array
+	
+chkLstMov:									
+	mov 16(sp), r3							;get the address from stack into r3
+	sub #Board, r3
+	sxt r2									;use sign extension for dividing
+	div #20, r2								;r3 now holds the number of column of the dst
+	mov r1, r2								;move src column to check with dst column
+	mov 20(sp), r1 							;initialize r1 with the address
+	cmp r3, r2								;if dst < src then we have moved left and now go to check right move
+	blt movRight								;handle this case
+	br moveOn								;if not keep searching	
+
+moveOn:										
+	add #2,r1								;if we are here we move on to the next unit
+	cmp r1, BoardEnd							;checking we are still in the board boundries
+	bge zeroMov								;if we are out of board boundries then the player has no more moves
+	cmp (r1), currentPlayer					;checking if the unit in the address we check is of the player
+	beq moveLeft								;if it is, lets check if it can move starting from left check
+	br moveOn								;otherwise look for next piece
+
+moveLeft:						
+	mov r1, 20(sp)							;put the address in src output
+	mov r1, r3								;mov the src position to r3 in order to divide
+	sub #Board, r3
+	sxt r2									;using sign extension for division
+	div #20, r2								;division by 20 will give us the column of that piece
+	cmp r3, #0								;if the remainder is zero we are on the left column and cannot move left
+	beq movRight								;if so check if right move is possible
+	mov r1, r2								;if not move the unit's address to r2 in order to get dst pos
+	add (r0), r2							;and add to it our left movement step so it will point to where we want to move our piece
+	cmp r2, BoardEnd							;make sure we aren't falling of the face of the board downwards (possible only for second player peaces)
+	bge zeroMov								;if we are also the rest of the piece wont be able to move forward, so we're done
+	cmp r2, BoardAddress							;make sure we aren't falling of the face of the board upwards
+	blt moveOn								;it will happen only to the first player in the bigging so just skip the peace
+	cmp (r2), #0							;check if the place we want to go to is free
+	bne eatLeft								;if not, check if we can eat the piece
+	br foundMove								;if yes we have a possible move, so return it 
+eatLeft: 									
+	cmp (r2), currentPlayer					;checking if the unit we are trying to eat is our own unit 
+	beq movRight								;if so we cant eat it so try right movement
+	cmp r3, #2								;if the remainder of our position is 2 so we cannot eat left from second column
+	beq movRight								;search for right possible move
+	add (r0), r2							;and add to it our left movement step so it will point to where we want to move our piece
+	cmp r2, BoardEnd							;check we are whitin board boundries
+	bge movRight								;this time we cant conclude anything we we are
+	cmp r2, BoardAddress
+	blt movRight
+	cmp (r2), #0							;if it isnt free we cannot eat, search for right possible move
+	bne movRight
+	br foundMove
+movRight:						
+	mov r1, r3								;put the address in src output
+	sub #Board, r3
+	sxt r2									;using sign extension for division
+	div #20, r2								;division by 20 will give us the column of that piece
+	cmp r3, #16								;if the remainder is 16 we are at the 8 column and cannot move right
+	beq moveOn								;keep searching
+	mov r1, r2								;reinitialize where we want to move
+	add 2(r0), r2							;add a right movement step (the second value in MovmentArray) 
+	cmp r2, BoardEnd							;make sure we aren't falling of the board
+	bge zeroMov	
+	cmp r2, BoardAddress
+	blt moveOn
+	cmp (r2), #0							;check if the place we want to go to is free
+	bne eatRight
+	br foundMove
+eatRight:										;checks if the player can skip diagonally right
+	cmp (r2), currentPlayer
+	beq jmpToMoveOn
+	cmp r3, #14								;if the remain of our place is 14 we are on the second rightest column so we can't skip right
+	beq jmpToMoveOn
+	add 2(r0), r2							;add another right movement step
+	cmp r2, BoardEnd							;make sure we aren't falling of the board
+	bgt jmpToMoveOn
+	cmp r2, BoardAddress
+	blt jmpToMoveOn
+	cmp (r2), #0							;check if the place we want to go to is free
+	beq foundMove
+
+jmpToMoveOn:									;for when its to far for br	
+	jmp moveOn
+	
+foundMove:								;return the found move
+	mov r1, 20(sp)						;mov src to output in stack
+	mov r2, 16(sp)						;move dst to output in stack
+	sub BoardAddress, 20(sp)				;getting the relative address
+	sub BoardAddress, 16(sp) 
+	asr 20(sp) 							;dividing by 2 to get index
+	asr 16(sp)
+	mov (sp)+, r3						;restore registers
+	mov (sp)+, r2
+	mov (sp)+, r1
+	mov (sp)+, r0
+	rts pc
+	
+zeroMov:									;if ther is no next move point src and dst to last found pice (20(sp) will have the last piece's address)
+	sub BoardAddress, 20(sp)				;on board add -> relative add
+	asr 20(sp) 							;relative address -> position
+	mov 20(sp), 16(sp)					;desPos = srcPos
+	mov (sp)+, r3						;restore registers
+	mov (sp)+, r2
+	mov (sp)+, r1
+	mov (sp)+, r0
+	rts pc
+
+	
+
+BoardAddress: .word 0
+BoardEnd: .word 200	
+	
+;Register's key
+
+;damka - the main game manager that will keep the game rolling
+;input: all input will be entered through commands from the user
+;output: the function will print the game on screen
+
+damka:	
+	mov #1, r0				;initialization of current player
+	mov #1, CP				;initialization of current player
+	
+gameOff:
+	bis #1, @#tks			;ready flag - in order to get the next input
+	cmp stage, #0			;while stage==0 loop			
+	beq gameOff				;the loop
+	
+	
+	mov #0, -(sp)		;giving output cell for decideTurn
+	jsr pc, decideTurn	;will check if the current player is human or computer
+	cmp (sp)+, #1		; "1" is for human , "-1" for computer
+	beq humTurn			;go to handle human turn
+	jmp comTurn			;go to handle computer turn
+	
+humTurn:
+	jsr pc, iniTime		;initializing global variables for the clock
+	mov #0, done			;initialize done to 0
+	mov #2, stage		;initialize stage to 2
+	jsr pc, printb		;printing the board layout
+	jsr pc, printp		;printing the current player
+	tst -(sp)			;giving output cell for checkWin
+	mov #Board, -(sp)	;giving input for checkWin
+	mov #1, -(sp)		;giving parameters for checkWin
+	jsr pc, checkWin		;checking victory
+	cmp 4(sp), #1		;check if there was a victory
+	beq victory			;go to handle the case someone won
+	jsr pc, changePlayer	
+	jsr pc, checkWin		;checking if the black player won
+	cmp 4(sp), #1		;check if there was a victory
+	beq victory
+	add #6, sp			;removing input from stack
+	mov #100, @#lcs 		;IE enable for the clock
+	
+wfc:
+	cmp done, #0			;check if command(move or stop) was recieved from the user
+	bne nextT			;if not - go to the next turn
+	cmp timeEnded, #1		;check if the time has ended the game will end
+	bne wfc				;while time is not over - loop
+	br noTime			;if the time out - go to no time
+	
+
+	
+
+
+	
+noTime:
+
+	mov #msgNoTime, -(sp)	;parameter for printf
+	mov #newLine, -(sp)	;parameter for printf
+	mov #msg$, -(sp)		;parameter for printf
+	mov #3, -(sp)		;parameter for printf
+	jsr pc, printf		;printing the msg
+	add #10, sp			;removing input from stack
+	mov #Board, -(sp)	;giving parameters for copy board
+	mov #iniBoard, -(sp)	;giving parameters for copy board
+	jsr pc, copyBO		;initialization of the board for new game
+	add #4, sp			;removing input from stack
+	mov #1, done			;the turn is done
+	mov #0, stage		;going back to not active game
+	mov #1, r0			;initializing the first player
+	mov #1, CP			;initializing the first player
+	mov #0, timeEnded		;initialization of the flag
+	jsr pc, clearInput
+	mov #input, inputPointer	;setting up inputPointer for the next input
+	add #2, inputPointer
+	mov #0, input			;input is 0 letters now
+	jmp gameOff
+
+victory:
+	add #6, sp			;removing input from stack
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #msgwhite, -(sp)		;giving parameters for printf
+	cmp 4(sp), #1			;checking if this is the white player won
+	beq .+6
+	mov #msgBlack, (sp)		;moving the black msg
+	mov #msgPlayerWins, -(sp)	;giving parameters for printf
+	mov #newLine, -(sp)		;parameter for printf
+	mov #msg$, -(sp)			;parameter for printf	
+	mov #5, -(sp)			;parameter for printf
+	jsr pc, printf			;printing the input
+	add #14, sp
+	mov #Board, -(sp)	;giving parameters for copy board
+	mov #iniBoard, -(sp)	;giving parameters for copy board
+	jsr pc, copyBO		;initialization of the board for new game
+	add #4, sp			;removing input from stack
+	mov #1, done			;the turn is done
+	mov #0, stage		;going back to not active game
+	mov #1, r0			;initializing the first player
+	mov #1, CP			;initializing the first player
+	mov #0, timeEnded		;initialization of the flag
+	jsr pc, clearInput
+	mov #input, inputPointer	;setting up inputPointer for the next input
+	add #2, inputPointer
+	mov #0, input			;input is 0 letters now
+	jmp gameOff	
+	
+	
+nextT:
+	cmp stage, #0		;checking if there was a stop command
+	beq .+26			;if it was go to jmp gameOff
+	jsr pc, moveTime		;print the time the move took
+	mov CP, -(sp)		;moving the current player to stack in order to change it
+	jsr pc, changePlayer	;changing the player
+	mov (sp)+, CP		;updating the current player
+	mov CP, r0			;updating r0 too
+	jmp gameOff	
+	
+comTurn:
+	jsr pc, iniTime		;initializing global variables for the clock
+	mov #0, done			;initialize done to 0
+	mov #1, stage		;initialize stage to 2
+	jsr pc, printb		;printing the board layout
+	jsr pc, printp		;printing the current player
+	tst -(sp)			;giving output cell for checkWin
+	mov #Board, -(sp)	;giving input for checkWin
+	mov #1, -(sp)		;giving parameters for checkWin
+	jsr pc, checkWin		;checking victory
+	cmp 4(sp), #1		
+	beq victory			;go to handle the case someone won
+	jsr pc, changePlayer	
+	jsr pc, checkWin		;checking if the black player won
+	cmp 4(sp), #1		
+	beq victory	
+	mov #100, @#lcs 		;IE enable for the clock	
+	add #6, sp			;removing input from stack
+	jsr pc, aiMove		;going to check the best move to do
+	cmp done, #1			;checking if there was a stop command during the move
+	beq stopCom			;go to next turn
+	mov #0, timeEnded		;initialize timeEnded flag
+	mov SrcPos, src4			;initialization of parameters for movPiece
+	mov DstPos, dst4			;initialization of parameters for movPiece
+
+	mov src4, -(sp)			;checking if the move is no move
+	neg (sp)
+	add dst4, (sp)
+	cmp (sp)+, #0
+	beq .+20
+	
+	mov #backUpBoard, -(sp)	;initialization of parameters for movPiece
+	jsr r5, movPiece
+	src4: .blkw 1
+	dst4: .blkw 1
+	
+	tst (sp)+				;removing input from stack
+	mov #Board, -(sp)		;giving parameters for copyBO
+	mov #backUpBoard, -(sp)	;giving parameters for copyBO
+	jsr pc, copyBO			;restoring the real board from the mess the recurrsion made
+	add #4, sp				;removing input from stack
+	mov #0, done				;initialization of done flag
+	br nextT
+	
+stopCom:
+	mov #Board, -(sp)		;giving parameters for copyBO
+	mov #iniBoard, -(sp)	;giving parameters for copyBO
+	jsr pc, copyBO			;restoring the real board from the mess the recurrsion made
+	add #4, sp
+	mov #0, done				;initialization of done flag	
+	br nextT
+	
+	
+	halt
+
+aiMove:
+	mov sp, SaveLocation		;saving the pointer to the stack to restore when needed
+	mov #0, SrcPos			;initialization of parameter
+	mov #0, DstPos			;initialization of parameter
+	mov #0, WinParam			;initialization of parameter
+	
+	mov #SrcPos, -(sp)		;giving parameters for getMaxWP
+	mov #DstPos, -(sp)		;giving parameters for getMaxWP
+	mov #WinParam, -(sp)		;giving parameters for getMaxWP
+	mov CP, Player			;initialize the player we are making AI move for
+	mov #1, Steps			;initialization of steps
+	
+	mov #backUpBoard, -(sp)	;giving parameters for copyBO
+	mov #Board, -(sp)		;giving parameters for copyBO
+	jsr pc, copyBO			;saving the real board to the backup board (AI will mess with board)
+	add #4, sp 				;removing input from stack
+	
+aiLoop:
+	cmp timeEnded, #1			;check if the time has ended
+	beq escape				;if it is get out of getmaxwp
+	cmp done, #1				;check if the turn is already done (by stop command)
+	beq escape				;if it is get out of getmaxwp
+	jsr pc, getMaxWP			;going to check for the best move
+	add #2, Steps			;increasing the recurrsion depth by 2
+	cmp Steps, #11			;if the depth is greater then 11 we can stop
+	bgt escape				;if it is go out of the aiMove
+	br aiLoop				;keep the looping
+	
+	
+escape:
+	mov SaveLocation, sp		;restoring the sp pointer to the return address
+	rts pc 					;going back to comTurn
+	
+	
+	
+	
+;OPmove - this function will check if the command is a valid move command
+;output: 1 - valid 0 - not valid		
+	
+notMove:
+	mov (sp)+, r2	;restoring r2 value
+	mov (sp)+, r1	;restoring r1 value
+	mov (sp)+, r0	;restoring r0 value
+	mov #0, 2(sp)	;moving the return value
+	rts pc			;returning to the caller
+			
+	
+OPmove:
+	mov r0, -(sp)		;keeping the environment balanced
+	mov r1, -(sp)		;keeping the environment balanced
+	mov r2, -(sp)		;keeping the environment balanced
+	
+	mov #input, r0		;initializing r0 to be pointer to input
+	add #2, r0			;skipping the char counter
+	
+	cmpb #'m,(r0)		;check if the first char is 'm'
+	bne notMove		;if not - print Error	
+	inc r0				;advance pointer(r0) to the next char
+	cmpb #'o,(r0)		;check if the first char is 'o'
+	bne notMove		;if not - print Error	
+	inc r0				;advance pointer(r0) to the next char
+	cmpb #'v,(r0)		;check if the first char is 'v'
+	bne notMove		;if not - print Error	
+	inc r0				;advance pointer(r0) to the next char
+	cmpb #'e,(r0)		;check if the first char is 'e'
+	bne notMove		;if not - print Error	
+	inc r0				;advance pointer(r0) to the next char
+	mov r0,-(sp)		;initialize the stack with the pointer of the input	
+	jsr pc, skipSpace ;skip all the spaces in the input
+	mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+	;----------------------------first arguement-------------------------	
+	mov #0,-(sp)		;counter of the chars that is numbers
+	mov #0,-(sp)		;place to save if the char is valid
+	mov r0,-(sp)		;the pointer of the input
+	jsr pc,chkNum7		;check if the numbers in the input is valid
+	mov (sp)+,r0		;initialize the pointer with the current char in the input we need to check
+	mov (sp)+, r1		;moving the validity to r1 to check
+	mov (sp)+, r2		;moving the counted numbers to r2
+	cmp r1, #1			;checking if the input is valid
+	bne notMove			;the input is not valid
+	cmp r2, #2			;checking if there are only 2 numbers
+	bne notMove			;then the input is not valid
+	mov #2, -(sp)		;input for copyLabel
+	mov #moveLabel, -(sp);input for copyLabel
+	add #2, (sp)		;skipping the counter
+	mov r0, -(sp)		;input for copyLabel
+	sub #2, (sp)		;moving the pointer 2 chars backwards
+	jsr pc, copyLabel	;copying the first arguement
+	add #6, sp			;removing input from stack
+	mov r0,-(sp)		;initialize the stack with the pointer of the input	
+	jsr pc, skipSpace 	;skip all the spaces in the input
+	mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+	;----------------------------second arguement-------------------------
+	mov #0,-(sp)		;counter of the chars that is numbers
+	mov #0,-(sp)		;place to save if the char is valid
+	mov r0,-(sp)		;the pointer of the input
+	jsr pc,chkNum7		;check if the numbers in the input is valid
+	mov (sp)+,r0		;initialize the pointer with the current char in the input we need to check
+	mov (sp)+, r1		;moving the validity to r1 to check
+	mov (sp)+, r2		;moving the counted numbers to r2
+	cmp r1, #1			;checking if the input is valid
+	bne notMove			;the input is not valid
+	cmp r2, #2			;checking if there are only 2 numbers
+	bne notMove			;then the input is not valid
+	mov #2, -(sp)		;input for copyLabel
+	mov #moveLabel, -(sp);input for copyLabel
+	add #4, (sp)		;skipping the counter
+	mov r0, -(sp)		;input for copyLabel
+	sub #2, (sp)		;moving the pointer 2 chars backwards
+	jsr pc, copyLabel	;copying the first arguement
+	add #6, sp			;removing input from stack
+	mov r0,-(sp)		;initialize the stack with the pointer of the input	
+	jsr pc, skipSpace 	;skip all the spaces in the input
+	mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+	;---------------------------checking for enter in the end of command------------------	
+	mov r0,-(sp)		;initialize the stack with the pointer of the input	
+	jsr pc, skipSpace 	;skip all the spaces in the input
+	mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+	cmpb #15,(r0)		;check if the char is ENTER
+	bne notMove 		;if the last input char was ENTER, go to check if the moves are valid 
+	;--------------------------check if the command is valid on board----------------
+	jsr pc, getCord		;getting the index and moving it to src3 and dst3 labels
+
+	mov src3,-(sp)		;push the value of src3 ti the stack
+	add dst3,(sp)		;check the case if the source and the destination is 00 00 
+	cmp (sp)+,#0		;if src3==dst3==0 - it is valid and skip turn
+	beq .+34			;go to end the function - before mov (sp)+, r2		;restoring r2 value
+	
+	tst -(sp)			;giving parameters for validMove
+	jsr pc, validMove	;checking if the move is valid on board
+	cmp (sp)+, #1		
+	bne notMove			;if its not equal than the move is not valid
+	;-------------------------move the unit--------------------------------------
+
+	mov #Board, -(sp)		;giving parameters for movPiece
+	jsr r5, movPiece			;making the move
+src3: .blkw 1
+dst3: .blkw 1
+	tst (sp)+				;removing input from stack
+
+	
+	mov (sp)+, r2		;restoring r2 value
+	mov (sp)+, r1		;restoring r1 value
+	mov (sp)+, r0		;restoring r0 value
+	mov #1, 2(sp)		;return value
+	mov #1, done			;the turn is done
+	
+	mov #newLine, -(sp)
+	mov #1, -(sp)
+	jsr pc, printf
+	add #4, sp
+	
+	rts pc
+	
+
+
+	
+;iniTime - will initialize the clock's global variables in order to check time
+;input: no input needed
+;output: will update the global variables
+
+iniTime:
+	mov octTime1, timeLeft		;moving the time of player 1 to timeLeft variable
+	cmp CP, #1				;checking if its the same player
+	beq .+10
+	mov octTime2, timeLeft		;moving the second player time to timeLeft
+	sub #1, timeLeft			;subtracting one second
+	mov rate, partSec			;moving rate to the partsec clock parameter
+	rts pc
+
+;Register's key
+;r0 - the ascii value of the char inserted
+inp:
+	cmp INPallowed, #1		;checking if input is allowed right noWin
+	beq .+4
+	rti
+
+	mov r0, -(sp)			;keeping the environment balanced
+	movb @inputPointer, r0	;checking if last char was enter
+	cmpb r0, #15
+	beq inpEnt				;go to enter case
+	
+	cmp input, #49.			;if the counter is 49
+	beq noPlace				;then there is no more place for chars
+
+get:	movb @#tkb, r0			;moving the ascii value to r0 to check if its the end of the input
+
+	cmp r0, #10				;checking if the char inserted is 'backspace'
+	beq backspace
+	movb @#tkb, @#tpb 		;transfer char
+	movb r0, @inputPointer	;inserting the ascii value to the label
+	cmpb r0, #15			;checking if the char is 'enter'
+	beq endEn				;if it is handle this case
+	inc inputPointer			;incrementing the pointer
+	inc input				;incrementing the counter of chars inserted
+	bis #1, @#tks			;ready flag - in order to get the next input
+	mov (sp)+, r0
+	rti
+	
+inpEnt:
+	jsr pc, clearInput
+	mov #input, inputPointer	;setting up inputPointer for the next input
+	add #2, inputPointer
+	mov #0, input			;input is 0 letters now
+	br get					;go to get next char
+endEn:
+	mov (sp)+, r0
+	jsr pc, checkINP			;if enter is pressed then we should check input validity.
+	bis #1, @#tks			;ready flag - in order to get the next input
+	rti
+
+backspace:
+		cmp input, #0		;if the input counter is zero we should not backspace
+		bne .+6				;skip to "movb r0, @#tpb"
+		mov (sp)+, r0		;restore r0 value and go back from the interupt
+		rti
+		movb r0, @#tpb		;print the backspace
+		tstb @#tps			;check if the printer is ready for another char
+		bpl .-4				;if not wait untill it is
+		movb #40, @#tpb 	;move space char "empty char" to be printed
+		tstb @#tps			;check if the printer is ready again
+		bpl .-4				;if not wait untill it is
+		mov #10, @#tpb		;print backspace again in order to move the cursor backwards
+		mov (sp)+, r0		;restoring r0 from stack
+		bis #1, @#tks		;turn on the ready flag for keyboard
+		dec inputPointer		;decrease the input pointer
+		dec input			;decrease the input counter
+		rti					;return from the trap
+inputPointer: .blkw 1
+
+noPlace:
+	movb #15, @inputPointer	;insert "enter" to the input so it will end the input if the user overflows
+	br endEn					
+	
+;Register's Key
+;r0 - will hold the input pointer
+;r1 - WP of the white player
+;r2 - WP of the black player
+;input - no input, use the input label that contain the input from the user
+;return - int stack: the value 1 - means stop was executed else 0
+		
+OPstop: 
+
+		mov r0,-(sp)		;keeping the environment balanced 
+		mov #input,r0		;initialize r0 with the address od the input
+		add #2,r0			;go to the adrress of the input from the user
+		cmpb #'s,(r0)		;checl if the first char is 's'
+		bne notStop			;if not its not a stop command
+		inc r0				;advance pointer(r0) to the next char
+		cmpb #'t,(r0)		;check if the first char is 't'
+		bne notStop			;if not its not a stop command	
+		inc r0				;advance pointer(r0) to the next char
+		cmpb #'o,(r0)		;check if the first char is 'o'
+		bne notStop			;if not its not a stop command	
+		inc r0				;advance pointer(r0) to the next char
+		cmpb #'p,(r0)		;check if the first char is 'p'
+		bne notStop			;if not its not a stop command	
+		inc r0				;advance pointer(r0) to the next char
+		mov r0,-(sp)		;initialize the stack with the pointer of the input	
+		jsr pc, skipSpace ;skip all the spaces in the input
+		mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+		cmpb (r0),#15		;check if the last char is ENTER
+		bne notStop			;the input is invalid meand ENTER didnt in the input - it isnt stop
+		mov r1,-(sp)		;keeping the environment balanced
+		mov r2,-(sp)		;keeping the environment balanced
+		mov r4,-(sp)		;keeping the environment balanced
+		mov #Board,-(sp)		;preaper arguments to the function calcWP - push the board
+		mov #1,-(sp)		;preaper arguments to the function calcWP - push the player
+		jsr pc,calcWP		;calculate the WP of the white player - return in r4
+		mov r4,r1			;initialize r1 with the value of WP of the white player
+		mov #2,(sp)			;preaper arguments to the function calcWP - push the player
+		jsr pc,calcWP		;calculate the WP of the black player - return in r4
+		mov r4,r2			;initialize r2 with the value of WP of the white player
+		add #4,sp			;clear 2 cells from the stack
+		mov #Board, -(sp)		;giving parameters for copyBO
+		mov #iniBoard, -(sp)	;giving parameters for copyBO
+		jsr pc, copyBO			;restoring the real board from the mess the recurrsion made
+		add #4, sp
+		cmp r1,r2			;compare the wp of the white player with the black player
+		beq tieWP			;if the WP's is equal - it is a tie
+		bgt whiteWin			;if r1>r2 means the wp of white player is greater then wp of the black player
+		br blackWin			;if r1<r2 means the wp of black player is greater then wp of the white player
+		
+
+
+		
+notStop:
+	mov (sp)+, r0			;restoring r0 value
+	mov #0, 2(sp)			;return value
+	rts pc
+		
+
+tieWP:
+	mov #0,-(sp)			;update in the stack the value 0 - means this is the WP we want to print
+	mov #msgWP,-(sp)
+	jsr pc, conToAscii
+	add #4,sp
+	mov #0,-(sp)
+	mov CP,-(sp)				;update in the stack the value 0 - means this is a tie 
+	jsr pc, printStop			;print stop massage
+	add #4, sp				;clear 2 cells from the stack
+	mov (sp)+,r4			;keeping the environment balanced
+	mov (sp)+,r2			;keeping the environment balanced
+	mov (sp)+,r1			;keeping the environment balanced
+	mov (sp)+,r0			;keeping the environment balanced
+	mov #0, stage			;indicating we are going back to stage 0
+	mov #1, done				;indicating the turn is over
+	mov #1, 2(sp)			;return value
+	rts pc					;back to the function that call you
+	
+blackWin:
+		mov #2,-(sp)		;preaper values to print stop - 2 means the black player won
+		cmp #1,CP           ;check who is the current player
+		beq wpWhite			;the current player is white
+		br wpBlack			
+whiteWin:
+		mov #1,-(sp)		;preaper values to print stop - 1 means the white player won
+		cmp #1,CP			;check who is the current player
+		beq wpWhite
+		br wpBlack
+wpBlack:
+	mov r2,-(sp)			;mov the value of WP of the white player to the stack
+	mov #msgWP,-(sp)			;the address to put the ascii value of the WP we want to print
+	jsr pc, conToAscii		;convert the ocatali numbter of the WP to real number we want to print		
+	add #4,sp				;clear 2 cells from the stack
+	mov CP,-(sp)				;preaper value to print stop
+	jsr pc,printStop			;print stop
+	add #4,sp				;clear 2 cells from the stack				
+	mov (sp)+,r4			;keeping the environment balanced
+	mov (sp)+,r2			;keeping the environment balanced
+	mov (sp)+,r1			;keeping the environment balanced
+	mov (sp)+,r0			;keeping the environment balanced
+	mov #0, stage			;indicating we are going back to stage 0
+	mov #1, done				;indicating the turn is over	
+	mov #1, 2(sp)			;return value - update in the stack the value 1 - means the white player won 
+	rts pc
+	
+wpWhite: 
+	mov r1,-(sp)			;mov the value of WP of the white player to the stack
+	mov #msgWP,-(sp)			;the address to put the ascii value of the WP we want to print
+	jsr pc, conToAscii		;convert the ocatali number of the WP to real number we want to print		
+	add #4,sp				;clear 2 cells from the stack
+	mov CP,-(sp)				;preaper value to print stop - current player
+	jsr pc,printStop			;print stop
+	add #4,sp				;clear 2 cells from the stack				
+	mov (sp)+,r4			;keeping the environment balanced
+	mov (sp)+,r2			;keeping the environment balanced
+	mov (sp)+,r1			;keeping the environment balanced
+	mov (sp)+,r0			;keeping the environment balanced
+	mov #0, stage			;indicating we are going back to stage 0
+	mov #1, done				;indicating the turn is over	
+	mov #1, 2(sp)			;return value - update in the stack the value 1 - means the white player won 
+	rts pc					;back to the function that call you
+	
+
+
+;decideTurn will tell if the next turn is belong to computer or human
+;input: in stack (output cell)
+;output: in stack (output cell)
+decideTurn:
+	mov #1, 2(sp)		;moving a human turn output to stack
+	cmp CP, #2			;checking if the white player is playing
+	beq identifyB			;if it is go to check if he is computer or human
+	cmpb player1, #'h 	;checking if the white player is human
+	bne .+4				;if not human skip forward to change the return value
+	rts pc
+	neg 2(sp)			;negate the result
+	rts pc
+		
+		
+identifyB:
+	cmpb player2, #'h 	;checking if theblack player is a Human being
+	bne .+4				;if he is not human skip forward to change the return value
+	rts	pc				;if he yes get back
+	neg 2(sp)			;negate the result
+	rts	pc				;going back to the caller
+	
+	
+;printP - will print the current player
+;input: global variable CP
+;output: will print the current player
+printp:
+	mov #newLine, -(sp)			;giving parameters for printf
+	mov #msgCurrent, -(sp)		;giving parameters for printf
+	mov #msgWhite, -(sp)			;giving parameters for printf
+	cmp CP, #1					;checking if it is the white player
+	beq .+6
+	mov #msgBlack, (sp)			;so it is a black player
+	mov #msgSpace, -(sp)			;giving parameters for printf	
+	mov #msgHuman, -(sp)			;giving parameters for printf
+	mov #0, -(sp)				;giving parameters for decideTurn
+	jsr pc, decideTurn			;check if the player is computer or human
+	cmp (sp)+, #1				;if its equal he is human
+	beq .+6
+	mov #msgComputer, (sp)		;if not enter the computer label
+	mov #newLine, -(sp)			;giving parameters for printf
+	mov #msg$, -(sp)				;giving parameters for printf
+	mov #7, -(sp)				;giving parameters for printf
+	jsr pc, printf				;printing the input
+	add #20, sp					;removing input from stack
+	
+	rts pc
+
+;Register's key
+
+;r0 - src address
+;r1 - Movement pointer
+;r2 - points to the next move we are checking
+;r3 - arithmetic pointer to know our position on the board.
+	
+;validMove - will check if the move is actually valid on the Board
+;input: (r0 - current player, global labels)
+;output:in stack (1- valid, 0 - not valid)
+validMove:
+	mov r0, -(sp)		;keeping the environment balanced
+	mov r1, -(sp)		;keeping the environment balanced
+	mov r2, -(sp)		;keeping the environment balanced
+	mov r3, -(sp)		;keeping the environment balanced
+	
+	mov #Board, r0			;Moving the adress of board to register r0
+	mov src3, -(sp)			;moving the src index to stack
+	asl (sp)				;multiplying by 2
+	add (sp)+, r0			;adding the relative src address
+	mov dst3, -(sp)			;moving the dst index to stack
+	asl (sp)				;multiplying by 2
+	add #Board, (sp)			;now this is the dst address
+	mov #WhitePlayerMov, r1	;initializing our movement array to the white player
+	cmp CP, #1				;checking if we are really using the white player
+	beq checkValid			;if it is the white player go to check the unit in the r0 address.
+	mov #BlackPlayerMov, r1	;if it isnt the white player playing mov the movement array of the black player to r1
+	br checkValid				;if its black we have updated the movement array now go to check
+	
+checkValid:
+	cmp (r0), CP				;checking if the src address contains the player unit
+	bne badCor				;return that the move is not valid
+	br location				;go to check the unit's location in the board
+	
+	
+location:		
+			mov r0, r3			;move the board pointer address to r3 in order to check column position
+			sub #Board, r3		;subtracting the board adress from r3 in order to get its relative address
+			sxt r2				;using sxt in order to divide
+			div #20, r2   		;checking the column of the unit
+			cmp r3, #0			;if the remain is 0 we cannot move to the left
+			beq Right			;we cannot move to the left so we will check right moves
+			br Left  			;we will start with left checking and then try right	
+	
+	
+	
+Left:		mov r0, r2			;moving the address of board pointer to r2 for calculations for the next move
+			add (r1), r2		;adding the movement for left move
+			cmp r2, #Board+176  	;checking that we are not going over the borders of the board
+			bgt badCor			;if we do then end the program
+			cmp r2, #Board		;checking that we are not going over the borders of the board
+			blt badCor			;happens to first unit, so we skip to the next
+			cmp (r2), #0		;checking if the movement is free to go
+			bne EL				;if its not free to go maybe there is a chance to eat enemy's unit
+			cmp r2, (sp)		;check if its out dst
+			beq goodCor
+			br Right				;then go to check if we have right movement possibility	
+	
+EL:			cmp (r2), 10(sp)  	 ;Check if the unit we want to eat is our own
+			beq Right			;if it is equal to our unit go to check if we can move to the right
+			cmp r3, #2			;checking if we are in the second column
+			beq Right  			;we cannot eat to the left because we are in the second column
+			add (r1), r2		;adding the left movement to the board pointer 
+			cmp r2, #Board+176 	; checking that we are not going being the borders of the board
+			bgt Right			;check if we can move to the right
+			cmp r2, #Board		; checking that we are not going being the borders of the board
+			blt Right			;check if we can move to the right
+			cmp (r2), #0		;Checking if the movement is free to go
+			bne Right			;we cannot eat to the left so go check right movement
+			cmp r2, (sp)		;checking if it is our dst address
+			beq goodCor
+			br Right				;now go check right movement options	
+			
+	
+Right:		cmp r3, #16   			; checking if we are at the last column then we cant move to the right
+			beq badCor				;if we are go to loop and check the next unit
+			mov r0, r2				;moving the board pointer to r2 for calculating
+			add 2(r1), r2			;adding the move right number to the address
+			cmp r2, #Board+176		; checking that we are not going being the borders of the board
+			bgt badCor				;if we are out of border end the program
+			cmp r2, #Board			; checking that we are not going being the borders of the board
+			blt badCor				;if we are out of the border go to loop and check next unit
+			cmp (r2), #0			;check if the move is good to go
+			bne RE					;if its not clear maybe we can eat enemy's unit
+			cmp r2, (sp)			;checking if it is our dst address
+			beq goodCor				
+			
+RE:			cmp (r2), 10(sp) 	;check if the unit we want to eat is our own
+			beq badCor			;if its our own go back to loop to check the next unit
+			cmp r3, #14 		;we are on the seventh column and cannot eat to the right 
+			beq badCor			;we cannot eat from there so go to loop to search for next unit
+			add 2(r1), r2		;add the movement to the right to r2
+			cmp r2, #Board+176 ; checking that we are not going being the borders of the board
+			bgt badCor			;if we are out of borders go to loop to check the next unit
+			cmp r2, #Board		; checking that we are not going being the borders of the board
+			blt badCor			;if we are out of borders go to loop to check the next unit
+			cmp (r2), #0		;checking if its clear to eat
+			bne badCor			;if its not clear go back to loop to search for more units
+			cmp r2, (sp)		;checking if it is our dst address
+			beq goodCor
+			br badCor			;go back to searching			
+	
+goodCor:
+	tst (sp)+			;removing dst address from stack
+	mov (sp)+, r3		;restoring the register's value
+	mov (sp)+, r2		;restoring the register's value	
+	mov (sp)+, r1		;restoring the register's value	
+	mov (sp)+, r0		;restoring the register's value	
+	
+	mov #1, 2(sp)		;moving the return value to the stack
+	rts pc
+	
+badCor:
+	tst (sp)+			;removing dst address from stack
+	mov (sp)+, r3		;restoring the register's value
+	mov (sp)+, r2		;restoring the register's value	
+	mov (sp)+, r1		;restoring the register's value	
+	mov (sp)+, r0		;restoring the register's value	
+	
+	mov #0, 2(sp)		;moving the return value to the stack
+	rts pc
+	
+
+
+
+
+;------------------------------------------------------------------------------------------	
+;Register's Key
+;r0 - will hold the input pointer
+;return - no returning value, update global arguments and checking the inputs
+
+
+checkINP:
+		mov r0,-(sp)		;keeping the environment balanced
+		mov #input,r0		;initialize r0 with the address od the input
+		add #2,r0			;go to the adrress of the input from the user
+		cmp stage, #1		;check which stage the game is
+		beq caseS1			;if stage==1 go to case stage 1	
+		blt caseS0			;if stage==0 go to case stage 0
+		jmp caseS2			;elsethe is 2 go to case stage 2
+		
+caseS1: 	
+		mov #0, -(sp)		;giving cell for output of OPstop
+		jsr pc, OPstop		;check if the command recieved is "stop"
+		cmp (sp)+, #1		;checking if stop OP have been found
+		beq endCase1			;if it is stop end the case
+		
+		mov #0, -(sp)		;giving cell for output of OPtime
+		jsr pc, OPtime		;check if the command recieved is "time"
+		cmp (sp)+, #1		;checking if time OP have been found
+		beq endCase1			;if it is time end the case
+		
+		jsr pc, printError	;if its none of the above, then the command is not supported - print error
+		mov (sp)+, r0		;restore the value of r0
+		rts pc				
+
+endCase1:
+	mov (sp)+, r0			;restoring r0 value
+	rts pc					;returning to the caller				;returning to the caller
+
+caseS0: 
+		cmpb #'s,(r0)		;checl if the first char is 's'
+		bne errorINP			;if not - print Error	
+		inc r0				;advance pointer(r0) to the next char
+		cmpb #'t,(r0)		;check if the first char is 't'
+		bne errorINP			;if not - print Error	
+		inc r0				;advance pointer(r0) to the next char
+		cmpb #'a,(r0)		;check if the first char is 'a'
+		bne errorINP			;if not - print Error	
+		inc r0				;advance pointer(r0) to the next char
+		cmpb #'r,(r0)		;check if the first char is 'r'
+		bne errorINP			;if not - print Error	
+		inc r0				;advance pointer(r0) to the next char
+		cmpb #'t,(r0)		;check if the first char is 't'
+		bne errorINP			;if not - print Error	
+		inc r0				;advance pointer(r0) to the next char
+		mov r0,-(sp)		;initialize the stack with the pointer of the input	
+		jsr pc, skipSpace 	;skip all the spaces in the input
+		mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+		cmpb #'h,(r0)		;check if the input is h 
+		beq humanP1			;this if human player
+		cmpb #'c,(r0)		;check if the input is c
+		beq computP1			;this is cmputer player
+		br errorINP			;the input is invalid
+humanP1:
+		movb #'h, player1	;initialize player1 to be h
+		br .+10
+computP1:
+		movb #'c, player1	;initialize player1 to be c
+		inc r0
+		mov r0,-(sp)		;initialize the stack with the pointer of the input	
+		jsr pc, skipSpace 		;skip all the spaces in the input
+		mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+		cmpb (r0),#60		;compare to the number 0
+		beq errorINP		;input invalid
+		mov #0,-(sp)		;place to save if the char is valid
+		mov #0,-(sp)		;counter of the chars that is numbers
+		mov r0,-(sp)		;the pointer of the input
+		jsr pc,checkNum		;check if the numbers in the input is valid
+		mov (sp)+,r0		;initialize the pointer with the current char in the input we need to check
+		cmp (sp),#0			;check if the input of the numbers was valid - if the value in the stack was 0 - invalid input
+		beq errorINP		;there was invalid number - go to print error
+		tst (sp)+			;clear cell from the stack
+		
+		mov #msgTime1,-(sp)	;preaper the stack with the value of the address msg Time1
+		jsr pc,clearLabel     ;the function clearLabel will clear the address msg Time1
+		tst (sp)+			;clear one cell from the stack
+		mov #msgTime2,-(sp)	;preaper the stack with the value of the address msg Time2
+		jsr pc,clearLabel		;the function clearLabel will clear the address msg Time2
+		tst (sp)+			;clear one cell from the stack
+		
+		
+		mov (sp), msgTime1	;setting up counter for label
+		mov #msgTime1,-(sp)	;preaper the stack to copy the number to msgTime1
+		add #2, (sp)		;skipping the counter
+		mov r0,-(sp)		;preaper the stack to copy the number with the place the number start
+		sub 4(sp),(sp)		;relative address fix
+		jsr pc,copyLabel		;copy the number to msgTime1
+		add #6,sp			;clear the stack from the input
+		mov r0,-(sp)		;initialize the stack with the pointer of the input	
+		jsr pc, skipSpace 		;skip all the spaces in the input
+		mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+		
+		;-------------------initialize player 2---------------
+		
+		cmpb #'h,(r0)		;check if the input is h 
+		beq humanP2			;this if human player
+		cmpb #'c,(r0)		;check if the input is c
+		beq computP2			;this is cmputer player
+		br errorINP			;the input is invalid
+errorINP:
+		cmp (sp),#0			;check if there is 0 in the stack- means the numbers in the input were invalid
+		bne .+6				;if there is not 0, it is another reason to invalid input, go to keep the environment balanced
+		add #4, sp			;if it was invalid numbers- clear 2 cells in the stack
+		mov (sp)+,r0		;keeping the environment balanced
+		jsr pc, printError	;print Error
+		rts pc				;back to the function
+		
+humanP2:
+		movb #'h, player2	;initialize player2 to be h
+		br .+10
+computP2:
+		movb #'c, player2	;initialize player2 to be c
+		inc r0
+		mov r0,-(sp)		;initialize the stack with the pointer of the input	
+		jsr pc, skipSpace 	;skip all the spaces in the input
+		mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+		cmpb (r0),#60		;compare to the number 0
+		beq errorINP			;input invalid
+		mov #0,-(sp)		;place to save if the char is valid
+		mov #0,-(sp)		;counter of the chars that is numbers
+		mov r0,-(sp)		;the pointer of the input
+		jsr pc,checkNum		;check if the numbers in the input is valid
+		mov (sp)+,r0		;initialize the pointer with the current char in the input we need to check
+		cmp (sp),#0			;check if the input of the numbers was valid - if the value in the stack was 0 - invalid input
+		beq errorINP		;there was invalid number - go to print error
+		tst (sp)+			;clear cell from the stack
+		mov (sp), msgTime2	;setting up counter for label
+		mov #msgTime2,-(sp)	;preaper the stack to copy the number to msgTime2
+		add #2, (sp)		;skipping the counter
+		mov r0,-(sp)		;preaper the stack to copy the number with the place the number start
+		sub 4(sp),(sp)		;relative address fix
+		jsr pc,copyLabel	;copy the number to msgTime1
+		add #6,sp			;clear the stack from the input
+		cmpb #15,(r0)		;check if the char is ENTER
+		beq validINP
+		
+		mov r0,-(sp)		;initialize the stack with the pointer of the input	
+		jsr pc,skipSpace 		;skip all the spaces in the input
+		mov (sp)+,r0 		;initialize r0 with the address that point to place with char(no space)
+		cmpb #15,(r0)		;check if the char is ENTER
+		beq validINP		;if the last input char was ENTER go to validINP - the input was valid 
+		br errorINP			;else go to errorINP - the input was invalid
+
+
+
+validINP:
+		mov (sp)+,r0		;keeping the environment balanced
+		jsr pc, startPrnt		;print start massage
+		tst -(sp)			;preaper empty cell to the return valu from the function ascToNum
+		mov #msgTime1,-(sp)	;preaper the ascii we want to convert to ocatali number to  the function ascToNum
+		add #2,(sp)			;advance to the input
+		jsr pc,ascToNum		;this function will do the convert from ascii to ocatali number
+		tst (sp)+			;delete one cell from the stack		
+		mov (sp)+,octTime1	;initialize octTime1
+		tst -(sp)			;preaper empty cell to the return valu from the function ascToNum
+		mov #msgTime2,-(sp)	;preaper the ascii we want to convert to ocatali number to  the function ascToNum
+		add #2,(sp)			;advance to the input
+		jsr pc,ascToNum		;this function will do the convert from ascii to ocatali number
+		tst (sp)+			;delete one cell from the stack		
+		mov (sp)+,octTime2	;initialize octTime2
+		inc stage			;changing stage from 0 to indicate that the game is now active
+		mov #1, CP			;starting always with white player
+		mov #0, done			;initialization of done flag
+		mov #0, timeEnded		;initialization of timeEnded flag
+		rts pc				;back to function				;back to function
+		
+toError:
+	br errorINP
+
+		
+;Register's Key
+;input -  the pointer of the current input in the stack
+;return - the current pointer to the char in the input that is not space
+		
+skipSpace: 
+		cmpb @2(sp),#40 ;check if there is space
+		bne .+10       	;if there is not space go back to the function
+		inc 2(sp)		;the char was spce - advance pointer to the next char
+		br skipSpace		;loop- check if the next char is space
+		rts pc			;back to the function
+		
+
+		
+		
+;Register's Key
+;r1 - will hold the input pointer
+;input - in stack 2 empty spaces and the pointer of the current input
+;return - int stack: the counters of numbers, 0/1 - the numbers is invalid or valid, pointer to the current char in the input to check
+
+
+checkNum:
+		mov r1,-(sp)		;keeping the environment balanced 
+		mov 4(sp),r1		;r1 will hold the address of the input 
+			
+loopN:	
+		cmpb (r1),#40		;check if the char is space
+		beq validN			;if it is space go to valid number
+		cmpb (r1),#15		;if it is 'enter'
+		beq validN
+		cmpb (r1),#60		;check if the number is lower then 0
+		blt invalidN			;if the number is negative go to invalid number label
+		cmpb (r1),#71		;check if the number is valid 
+		bgt invalidN			;if the number is more then 9 go to invalid number
+		inc 10(sp)			;add 1 to the counter of the chars that is numbers
+		mov #1,6(sp)		;initialize 1 - means the number is valid 
+		inc r1				;advance pointer(r1) to the next char
+		mov r1,4(sp)		;update the pointer to the current char in the input
+		br loopN				;go to check the nexr char
+		
+validN: 
+	mov r1,4(sp)			;update the pointer to the current char in the input
+	mov (sp)+,r1			;keeping the environment balanced 
+	rts pc					;back to pc
+	
+		
+invalidN:
+		mov r1,4(sp)		;update the pointer to the current char in the input
+		mov (sp)+,r1		;keeping the environment balanced
+		mov #0,4(sp)		;initialize 0 in the stack
+		mov #0,6(sp)		;initialize 0 in the counter in the stack 
+		rts pc
+
+chkNum7:	
+		mov r1,-(sp)		;keeping the environment balanced 
+		mov 4(sp),r1		;r1 will hold the address of the input 
+			
+loopN7:	
+		cmpb (r1),#40		;check if the char is space
+		beq validN			;if it is space go to valid number
+		cmpb (r1),#15		;if it is 'enter'
+		beq validN
+		cmpb (r1),#60		;check if the number is lower then 0
+		blt invalidN			;if the number is negative go to invalid number label
+		cmpb (r1),#71		;check if the number is valid 
+		bgt invalidN			;if the number is more then 9 go to invalid number
+		cmpb (r1),#'7		;check if the number is 7	
+		beq	invalidN			;if it is - invalid input
+		inc 10(sp)			;add 1 to the counter of the chars that is numbers
+		mov #1,6(sp)		;initialize 1 - means the number is valid 
+		inc r1				;advance pointer(r1) to the next char
+		mov r1,4(sp)		;update the pointer to the current char in the input
+		br loopN				;go to check the nexr char
+
+		
+;---------------------------------------------------------------------------------------------
+
+caseS2: 
+		mov #0, -(sp)		;giving output cell for OPstop
+		jsr pc, OPstop		;checking if the command is stop
+		cmp (sp)+, #1		;checking if stop OP have been found
+		beq endCase2			;if it was found end the case
+		
+		mov #0, -(sp)		;giving output cell for OPmove
+		jsr pc, OPmove		;checking if the command is move
+		cmp (sp)+, #1		;checking if move command was found
+		beq endCase2			;if it was found end the case
+		
+		mov #0, -(sp)		;giving output cell for OPtime
+		jsr pc, OPtime		;checking if the command is time
+		cmp (sp)+, #1		;checking if the command time was found
+		beq endCase2			;if it was found end the case
+		
+		jsr pc, printError	;if it was not found, then this command is not supported - print error
+		mov (sp)+, r0		;restoring r0 value
+		rts pc
+		
+endCase2:
+	mov (sp)+, r0			;restoring r0 value
+	rts pc					;returning to the caller
+	
+
+
+
+
+;Register's Key
+;r0 - will hold the input pointer
+;return - no returning value, update global arguments and checking the inputs
+
+OPtime:
+	mov r1,-(sp)			;keeping the environment balanced
+	mov r0,-(sp)			;keeping the environment balanced
+	mov #input,r0			;initialize r0 with the address od the input
+	add #2,r0				;go to the adrress of the input from the user
+	cmpb #'t,(r0)			;check if the first char is 't'
+	bne notTime				;if not is not a time command
+	inc r0					;advance pointer(r0) to the next char
+	cmpb #'i,(r0)			;check if the first char is 'i'
+	bne notTime				;if not is not a time command
+	inc r0					;advance pointer(r0) to the next char
+	cmpb #'m,(r0)			;check if the first char is 'm'
+	bne notTime				;if not is not a time command
+	inc r0					;advance pointer(r0) to the next char
+	cmpb #'e,(r0)			;check if the first char is 'e'
+	bne notTime				;if not is not a time command
+	inc r0					;advance pointer(r0) to the next char
+	mov r0,-(sp)			;initialize the stack with the pointer of the input	
+	jsr pc, skipSpace 		;skip all the spaces in the input
+	mov (sp)+,r0 			;initialize r0 with the address that point to place with char(no space)
+	cmpb (r0),#15			;check if the last char is ENTER
+	bne notTime				;the input is invalid meand ENTER didnt in the input - it isnt time
+	mov timeLeft,-(sp)		;preaper the stack to the function numToAsc- push the value we want to convert
+	mov #msgTimeLeft,-(sp)	;preaper the stack to the function numToAsc- push the address of the value we want to convert
+	jsr pc,numToAsc 			;the function numToAsc - will convert time left to decimal ascii
+	add #4,sp				;clear 2 cells from the stack	
+	mov partSec,r0			;initialize part of seconds in r0
+	mul #100,r0				;mul r0 on 100
+	;sxt r0
+	div rate, r0				;div ro on rate
+	mov r0,r1 				;initialize r1 with the value of r0 : partSec*100/rate
+	sxt r0					;sign extension for devision
+	div #12,r0				;divide r0 in 12 to get the tens digit
+	add #60,r0				;convert r0 to ascii
+	mov #msgRightTime,-(sp)	;push the address of msgRightTime to the stack
+	add #2,(sp)				;go to the string place in the word
+	mov r0,@(sp)			;initialize msgRightTime with the tens digit
+	tst (sp)+				;clear one cell from the stack
+	jsr pc,printTime			;print time 
+		
+	mov (sp)+,r0			;restoring the value of r0
+	mov (sp)+,r1			;restoring the value of r1
+	mov #1,2(sp)			;update the output cell - the function of OPtime was executed
+	rts pc
+	
+	notTime:
+	mov (sp)+, r1			;restoring r1 value
+	mov (sp)+, r0			;restoring r0 value
+	mov #0, 2(sp)			;return value - the function was not executed
+	rts pc	
+	
+;input: no input
+;output: will print the message of time command on screen
+
+printTime:
+
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #msgTIme, -(sp)		;giving parameters for printf
+	mov #msgTimeLeft, -(sp)	;giving parameters for printf
+	mov #msgPoint, -(sp)		;giving parameters for printf
+	mov #msgRightTime, -(sp)	;giving parameters for printf
+	mov #msgSeconds, -(sp)	;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #7, -(sp)			;giving parameters for printf
+	jsr pc, printf			;printing input from stack
+	add #20, sp				;removing input from stack
+	rts pc
+	
+
+;ascToNum - will convert ascii value to its octal value
+;input: in stack (cell for output, address of ascii value)
+;output: in stack
+
+ascToNum:	
+		mov r0, -(sp) 		;keeping the environment balanced
+		mov r1, -(sp)		;keeping the environment balanced
+		clr -(sp)			;number of digits counter
+		mov 8(sp), -(sp) 	;copy pointers
+		cmpb @(sp), #'0		;compare if the input is 0
+		blt .+22 			;if the number is smaller them=n 0 -> no digit, go 6 commands bellow
+		cmpb @(sp), #'9		;compare if the input is 9
+		bgt .+12 			; if the number is greater then 9 -> no digit, go 4 commands bellow
+		inc (sp) 			;move to next byte
+		inc 2(sp)			;increase digit counter
+		br .-26				;go back
+		dec (sp) 			;return to last digit
+		mov (sp), 12(sp) 	;update pointer to point to end of number
+		mov #1, -(sp) 		;digit multiplier
+		clr -(sp) 			;temp storing
+		movb @4(sp), r1 	;move digit to r1
+		bic #177760, r1 	;turn ascii to integer
+		mul 2(sp), r1 		;digit multiplier*digit
+		add r1, (sp) 		; add result to tmp
+		mov 2(sp), r1		;move multiplier to r0
+		mul #10., r1		;multiple by 10
+		mov r1, 2(sp)		;move new multiplier to stack
+		dec 4(sp) 			;move pointer to next digit (from low to high)
+		dec 6(sp) 			;dec digit counter
+		bne .-42			;if didnt count all digits, go 9 commands above
+		mov (sp), 20(sp) 	;move number to result	
+		add #10, sp 		;sp restore
+		mov (sp)+, r1 		;restore r1 value
+		mov (sp)+, r0 		;restore r0 value
+		rts pc
+		
+;numToAsc - will convert a num to its decimal ascii value
+;input: in stack (value to convert, output address)
+;output: will update the output address given
+
+numToAsc:
+	mov r0, -(sp)	;keeping the environment balanced
+	mov r1, -(sp)	;keeping the environment balanced
+	mov r2, -(sp)	;keeping the environment balanced
+	mov r3, -(sp)	;keeping the environment balanced
+	mov r4, -(sp)	;keeping the environment balanced
+								
+	mov 16(sp), r0	 ;number to r0
+	mov 14(sp), r2	 ;output address to r3
+	add #2, r2		 ;pointer points to start of string
+	mov 14(sp), r3 	 ;output address to r3 , pointer points to string length
+	clr (r3)		 ;reset string length
+					 
+	tst r0         	 ;first deal with negetive
+	bne .+14
+	add #1, (r3)
+	mov #60, (r2)
+	br .+60
+	bpl .+12
+	movb #55, (r2)+  	;add "-" at the beginning, and move pointer
+	inc (r3)     	 	;char counter++
+	neg r0      		;turn to positive
+
+	mov #-1, -(sp)  	; stop flag see some commands bellow
+	tst r0   			;check if ZERO
+	beq .+20  			;no more digits continue to end
+	mov r0, r1			; prepare to devide
+	sxt r0
+	div #10., r0 		;seperate digits, last digit in r1
+	mov r1, -(sp)		;mov last digit to stack
+	inc (r3) 			;char counter++
+	br .-20     		;go 4 command above (tst r0)
+
+	tst (sp)  			;test if sp points to stop flag
+	bmi .+12  			;if yes jump 5 commands bellow
+	add #60, (sp)   	;turn to Ascii
+	movb (sp)+, (r2)+ 	;move to address and increase pointers
+	br .-12          	;jump 5 commands above
+	clr (sp)+ 			
+	mov (sp)+, r4		;restoring the register's value
+	mov (sp)+, r3		;restoring the register's value
+	mov (sp)+, r2		;restoring the register's value
+	mov (sp)+, r1		;restoring the register's value
+	mov (sp)+, r0		;restoring the register's value
+	rts pc
+
+
+;Register's key
+;r0 - will hold the digit found
+;r1 - will count how much digits converted
+;r2 - the remainder of the division
+;r3 - The num to be divided by 10
+;r4 - will hold a copy of the counter
+;r5 - will hold the pointer to the dst
+;conToAscii - will convert a value to its ascii value and insert to a label
+;input: in stack (value to convert, dst address)
+;output: will update the address given
+
+conToAscii:
+	mov r0, -(sp)		;keeping the environment balanced
+	mov r1, -(sp)		;keeping the environment balanced
+	mov r2, -(sp)		;keeping the environment balanced	
+	mov r3, -(sp)		;keeping the environment balanced
+	mov r4, -(sp)		;keeping the environment balanced
+	mov r5, -(sp)		;keeping the environment balanced
+	mov #0, r1			;initialization of the counter
+	mov #0, r4			;initialization of the double counter
+	mov 16(sp), r5		;moving the address to r5
+	mov 20(sp), r3		;setting up the value to r3
+	add #2, r5			;skipping the counter
+	mov #1, r2			;so it wont stop VTA imidietly
+
+	
+	tst r3				;checking if the number is negative
+	bge VTA 
+	inc r1				;inc the counter
+	movb #'-,(r5)		;moving '-' to the first ascii
+	inc r5				;incrementing the pointer
+	neg r3				;changing the value to positive
+	
+VTA:	
+	cmp r2, #0
+	beq copyVTA
+	sxt r2				;in order to divide in r3
+	div #10, r2			;dividing r3 in 10
+	mov r3, r0			;moving the digit to r0
+	add #'0, r0			;adding the ascii value of 0
+	movb r0, -(sp)		;saving the digit in stack (lsb)
+	inc r1				;incrementing the counter
+	inc r4				;incrementing the double counter
+	mov r2, r3			;moving the rest of the number to divive
+	br VTA
+	
+copyVTA:
+	cmp r4, #0			;checking if there are no more digits
+	beq endVTA			;go to end the VTA
+	
+	dec r4				;decrementing the copy counter
+	movb (sp)+, (r5)	;moving the ascii value to the label
+	inc r5				;moving the pointer forward
+	br copyVTA
+	
+endVTA:
+	mov (sp)+, r5		;restoring the register value
+	mov (sp)+, r4		;restoring the register value	
+	mov (sp)+, r3		;restoring the register value	
+	mov (sp)+, r2		;restoring the register value
+	mov r1, @6(sp)		;moving the counter to the label
+	mov (sp)+, r1		;restoring the register value	
+	mov (sp)+, r0		;restoring the register value	
+	
+	rts pc
+
+
+
+
+printc:
+tst count
+ble sof
+movb @pointer, @#tpb
+inc pointer
+dec count
+rti
+sof: clr busy
+rti
+
+;Register's Key
+;r0 - holds the number of strings left to print
+;r1 - points to the string being printed in the stack
+;input: in stack (msg1,msg2,....msgn, number of strings)
+;output: will print the strings in the order from 1-n
+printf:
+	mov #0, INPallowed;input is not available while printing
+	mov r0, -(sp)	;keeping the environment balanced
+	mov r1, -(sp)	;keeping the environment balanced
+	mov 6(sp), r0	;moving the num of strings to be printed
+	mov sp, r1		;moving the sp pointer to r1
+	add #6, r1		;pointing r1 to next address
+	asl 6(sp)		;multiplying by 2
+	add 6(sp), r1	;now r1 points to the first string needed to be printed
+
+next:
+	tst r0				;checking if we have finished to print the strings
+	beq endpr			;if so end the function
+	mov (r1), pointer	;moving the address of the string to the pointer for iot
+	sub #2, r1			;moving the r1 pointer to the next string
+	mov @pointer, count	;moving the number of chars to be printed
+	add #2, pointer		;moving the pointer to the string
+	
+	tst busy				;checking if the printer is busy
+	bgt .-4				;if so keep waiting
+	mov #1,busy			;setting up the flag for busy - wait method
+	iot					;input output trap
+	tst busy				;checking if the printer is busy
+	bgt .-4				;if so keep waiting
+	dec r0				;decrementing our string counter
+	br next
+
+endpr:
+	mov(sp)+, r1		;restoring the values of the register
+	mov(sp)+, r0		;restoring the values of the register
+	mov #1, INPallowed	;input is allowed again
+	rts pc				;returning to the caller
+
+
+pointer: .blkw 1
+count: .word 0
+busy: .word 0
+
+;Register's Key
+;r0 - will hold the Board pointer
+;r1 - a counter for adding new line to the board
+printb:
+	mov r0, -(sp)	;keeping the environment balanced
+	mov r1, -(sp)	;keeping the environment balanced
+	mov #Board, r0	;moving the board address to r0
+	mov #10, r1		;moving the value 10 to the counter
+	
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #msgLayout, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #5, -(sp)			;giving parameters for printf
+	jsr pc, printf
+	add #14, sp
+	
+loopB_W:
+	cmp r0,#Board+200	;checking if we are still whitin borders
+	beq endprBo			;if we are out of the borders end the function
+	tst r1 				;checking if counter reached 0
+	beq breakLi			;if so we have to print a new line
+
+afterBr:
+	cmp (r0)+, #1		;checking which unit is found in the address
+	beq prW				;if its equal print 'W'
+	bgt prB				;if its greater then print 'B'
+	blt pr_				;if its lower then print '_'
+	
+prW:
+	dec r1				;decrementing the counter
+	mov #msgW, -(sp)		;setting up parameters for printf
+	mov #1, -(sp)		;setting up parameters for printf
+	jsr pc, printf		;print 'W'
+	add #4, sp			;remove input from stack
+	br loopB_W			;going back to search for another unit to print
+	
+prB:
+	dec r1				;decrementing the counter
+	mov #msgB, -(sp)		;setting up parameters for printf
+	mov #1, -(sp)		;setting up parameters for printf
+	jsr pc, printf		;print 'B'
+	add #4, sp			;remove input from stack
+	br loopB_W			;going back to search for another unit to print
+	
+pr_:
+	dec r1				;decrementing the counter
+	mov #msg_, -(sp)		;setting up parameters for printf
+	mov #1, -(sp)		;setting up parameters for printf
+	jsr pc, printf		;print '_'
+	add #4, sp			;remove input from stack
+	br loopB_W			;going back to search for another unit to print
+	
+breakLi:
+	mov #10, r1			;setting up the counter to 10 again
+	mov #newLine, -(sp)	;setting up parameters for printf
+	mov #1, -(sp)		;setting up parameters for printf
+	jsr pc, printf		;printing a new line
+	add #4, sp			;remove input from stack
+	br afterBr
+	
+endprBo:
+	mov (sp)+, r1		;restoring r1 value
+	mov (sp)+, r0		;restoring r0 value
+	rts pc
+
+
+	
+;clearInput function will be called in order to clear the input label from all input
+clearInput:
+	mov #62, -(sp)
+	mov #input, inputPointer
+clear:	
+	clrb @inputPointer
+	inc inputPointer
+	dec (sp)
+	tst (sp)
+	bne clear
+	tst (sp)+
+	rts pc
+
+;printError will print the input label as "error" that cannot be executed
+printError:
+	mov #newLine, -(sp)		;setting up error msg
+	mov #error, -(sp)		;setting up error msg
+	mov #input, -(sp)		;setting up input for error
+	mov #msgQuat, -(sp)		;setting up ' " ' for end error msg
+	mov #newLine, -(sp)		;setting up a new line
+	mov #msg$, -(sp)			;setting up $
+	mov #6, -(sp)			;moving num of strings for printf
+	jsr pc, printf			;printing it all
+	add #16, sp				;removing input from stack
+	rts pc
+
+;Register's key
+;r0 - will hold the sum
+;r1 - will hold the digit
+;r3 - will hold the multiplier
+;This function will convery char number to dec number
+;input: in stack (output cell)
+;output: in stack (cell will be updated)	
+convert:
+	mov r0, -(sp)		;keeping the environment balanced
+	mov r1, -(sp)		;keeping the environment balanced
+	mov r3, -(sp)		;keeping the environment balanced
+	
+	mov number, -(sp)	;moving the number of chars to the stack
+	add #number, (sp)	;adding the relative address to the end of the label
+	add #1, (sp)		;adding 2 to the address of the pointer
+	mov #0, r0			;initializing r0 to 0
+	mov #1, r3			;initializing r3 to 1
+	
+toConvert:
+	tst number			;checking if we have no more chars to convert
+	beq endCon			;return the value and go back
+	movb @(sp), r1		;moving the ascii value to r1
+	sub #'0, r1			;subtracting the ascii value of 0
+	mul r3, r1			;multiplying by the right decimal place
+	mul #10, r3			;inc the multiplier
+	add r1, r0			;moving the value to r0 to sum it up
+	dec number			;decrementing the number of chars
+	dec (sp)			;decrementing the pointer backwards
+	br toConvert
+	
+endCon:
+	mov r0, 12(sp)		;moving the return value to the stack
+	tst (sp)+			;removing the pointer from stack
+	mov (sp)+, r3		;restoring r3 register from stack
+	mov (sp)+, r1		;restoring r1 register from stack
+	mov (sp)+, r0		;restoring r0 register from stack
+	rts pc				;returning to the caller
+	
+	
+;copyLabel is a function to copy labels
+;input in stack:(num of chars to copy, destination label, source label)
+;output - will be updated in the labels
+copyLabel:
+	cmp 6(sp), #0			;checking if the counter is 0
+	beq endCopy				;if it is exit the copy function
+	
+	movb @2(sp), @4(sp)		;copy a char from string A to string B
+	inc 2(sp)				;inc the pointer of the source
+	inc 4(sp)				;inc the pointer of the destination
+	dec 6(sp)				;decrementing the counter
+	br copyLabel				;going back to copy another char
+	
+endCopy:
+	rts pc					;return to the caller
+	
+
+;startPrnt will print the start message for the game when you start a new game
+;it has no input
+startPrnt:	
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #msgStarting, -(sp)	;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	
+	mov #msgWhite, -(sp)		;giving parameters for printf
+	mov #playerIs, -(sp)		;giving parameters for printf
+	
+	cmpb player1, #'c			;checking if the char is 'c'
+	beq .+10
+	mov #msgHuman, -(sp)		;giving parameters for printf
+	br .+6
+
+	mov #msgComputer, -(sp)	;giving parameters for printf
+	
+	mov #msgWith, -(sp)		;giving parameters for printf
+	mov #msgTime1, -(sp)		;giving parameters for printf
+	mov #msgPerMov, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	
+	
+	mov #msgBlack, -(sp)		;giving parameter for printf
+	mov #playerIs, -(sp)		;giving parameters for printf
+	
+	cmpb player2, #'h     	;checking if the char is 'c'
+	beq .+10
+	mov #msgComputer, -(sp)	;giving parameters for printf
+	br .+6
+
+	mov #msgHuman, -(sp)		;giving parameters for printf
+	mov #msgWith, -(sp)		;giving parameters for printf
+	mov #msgTime2, -(sp)		;giving parameters for printf
+	mov #msgPerMov, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #newLine, -(sp)		;giving parameters for printf
+	mov #23, -(sp)			;giving parameters for printf
+	jsr pc, printf			;printing the input
+	add #50, sp				;clearing the stack from inputs
+	rts pc
+	
+	;clearInput function will be called in order to clear the input label from all input
+	;in stack: the address of the label want to clear 
+clearLabel:
+		mov r0,-(sp)		;keeping the environment balanced
+		mov r1,-(sp)		;keeping the environment balanced
+		mov 6(sp),r0		;initialize r0 with the pointer of the label
+		mov @6(sp),r1		;initialize r1 with the number of the chars in the label from the stack 
+		mov #0,(r0)			;clear the counter in the label
+		add #2,r0			;point to the start of the 
+clearL:	tst r1
+		beq .+14			;go to 1301
+		clrb (r0)			;clear one char
+		inc r0				;advanced the pointer
+		dec r1				;inc -1 from the counter
+		tst r1				;check if there is more chars to delete (r1==0)
+		br clearL			;loop to delete the next char in the label 
+		mov (sp)+,r1		;restore values from the stack
+		mov (sp)+,r0		;restore values from the stack
+		rts pc 
+
+		
+;copyBO - will take source board and copy it to the dst board
+;Register Key
+;r0: source board
+;r1: destination board
+;input: in stack (dst board by address, src board by address)
+;output: will update the dst board
+
+copyBO:
+	mov r0,-(sp)		;keeping the environment balanced
+	mov r1,-(sp)		;keeping the environment balanced
+	
+	mov 6(sp), r0		;moving the source address to r0
+	mov 10(sp), r1		;moving the dst address to r1
+	add #200, 6(sp)		;now this is the end address of board
+copyUnit:
+		cmp r0, 6(sp)		;checking if we have reached the end
+		bge endCB			;if so end the copy
+		mov (r0)+, (r1)+	;copying the unit and inc the pointers
+		br copyUnit			;keep the loop going
+		
+endCB:
+	mov (sp)+, r1			;restoring r1 value
+	mov (sp)+, r0			;restoring r0 value
+	rts pc
+	
+
+
+;getCord - will take src and dst from moveLabel and compute the octal values
+;input: global moveLabel
+;output: updates the global labels src1 dst1
+
+getCord:
+	mov #2, number		;initialize number of chars
+	mov #2, -(sp)		;setting parameters for copyLabel
+	mov #number, -(sp)	;moving dst parameter
+	add #2, (sp)		;skipping the counter
+	mov #moveLabel, -(sp)	;giving source parameter
+	add #2, (sp)		;skipping the counter
+	jsr pc, copyLabel		;copying the label to "number"
+	add #6, sp			;clearing the stack from input
+	
+	tst -(sp)			;inserting output cell for src
+	jsr pc, convert		;converting the src ascii value into octal
+	mov (sp)+, src3		;moving the value into src3 label
+	
+	mov #2, number		;initialize number of chars
+	mov #2, -(sp)		;setting parameters for copyLabel
+	mov #number, -(sp)	;giving dst parameter
+	add #2, (sp)		;skipping to the dst chars
+	mov #moveLabel, -(sp)	;giving src parameter
+	add #4, (sp)		;skipping the counter
+	jsr pc, copyLabel		;copying the label to "number"
+	add #6, sp			;clearing the stack from input
+	
+	tst -(sp)			;inserting output cell for src
+	jsr pc, convert		;converting the dst ascii value into octal
+	mov (sp)+, dst3		;moving the value into dst3 label
+	
+	rts pc				;going back to the caller
+
+	
+	
+	
+
+	
+	
+
+	
+	
+;------------------------------------------------------------------HW3---------------------------------------------------------------------	
+	
+
+
+
+;countPieces - will return the number of black and white units on board.
+;call line - jsr pc, countPieces
+;input: in stack (Board address)
+;output: (white player units, black player units)
+countPieces:
+	mov r0, -(sp)					;keeping the environment balanced
+	mov r1, -(sp)					;keeping the environment balanced
+	mov 6(sp), r0					;moving the board address to r0
+	cmp (r0), #1					;check if the unit is white
+	beq whiteInc						;if it is inc the white counter
+	bgt blackInc						;if its greater so inc the black counter
+loop:
+	add #2, r0						;increasing the address of the current square we are looking at
+	cmp r0, #Board+200				;check we are within board boundries
+	bge endCount						;if we went out end the counting
+	cmp (r0), #1					;check if its equal or greater than 1
+	beq whiteInc						;equal - inc white units , greater - inc black units
+	bgt blackInc						;inc blacks
+	br loop							;keep checking
+whiteInc:							
+	inc 10(sp)
+	br loop							
+blackInc:							
+	inc 12(sp)
+	br loop					
+endCount:
+	mov (sp)+, r1					;restore the environment balance
+	mov (sp)+, r0					;restore the environment balance
+	rts pc	
+	
+	
+;calcWP - will return the WP for the given board and player
+;call line: jsr pc, calcWP	
+;input: in stack (Board by address, current player by value)
+;output: r4
+
+calcWP:	
+	mov r0, -(sp)				;keeping the environment balanced
+	mov r1, -(sp)				;keeping the environment balanced
+	mov r2, -(sp)				;keeping the environment balanced
+	mov r3, -(sp)				;keeping the environment balanced
+	mov 12(sp), r3				;moving the current player input to r3
+	mov 14(sp), r0				;moving the board input to r0
+	mov #0, -(sp) 				;giving cell for numPcs output player 2 
+	mov #0, -(sp) 				;giving cell for numPcs output player 1
+	mov r0, -(sp)				;giving board parameter for countPieces
+	jsr pc, countPieces
+	tst (sp)+
+	mov (sp)+, r1 				;return value of white pieces
+	mov (sp)+, r2				;return value of black pieces
+	cmp r1, #0					;checking if there are no white units 						
+	beq blackWon					;then black has won
+	cmp r2, #0					;checking if there are no black units						
+	beq whiteWon					;then white has won
+	cmp r1, r2					;checking for the same amount of units
+	beq tie						;if its the same
+	mov #0, -(sp)				;giving parameters for findMove (src)
+	mov #0, -(sp)				;giving parameters for findMove (dst)
+	mov r0, -(sp)				;giving board parameter for findMove
+	mov r3, -(sp)				;giving current Player parameter for findMove
+	jsr pc, findMove				;get next move
+	cmp 4(sp), 6(sp)			;check if its equal then it means player has no moves
+	bne noWin					;if positive then there are more moves
+	jsr pc, changePlayer			;change to next player
+	jsr pc, findMove				;get next move
+	cmp 4(sp), 6(sp)			;check if its equal then it means player has no moves
+	bne noWin					;if positive then there are more moves
+	tst (sp)+					;removing useless values from stack 
+	tst (sp)+					;removing useless values from stack 
+	tst (sp)+					;removing useless values from stack 
+	tst (sp)+					;removing useless values from stack 
+	cmp r2, r1					;checking who has more units on board
+	bgt blackWon
+	blt whiteWon
+		
+whiteWon:
+	cmp r3, #1					;checking if the player is white
+	beq setWin					;if it is set his winning
+	br setLose					;if not set then our player lost
+blackWon: 
+	cmp r3, #2					;checking if the player is black
+	beq setWin					;if it is set his winning
+	br setLose					;if its not then our player lost
+setWin:
+	mov #20, r4					
+	br endCalc
+setLose:
+	mov #-20, r4
+	br endCalc
+tie: mov #0, r4					
+	br endCalc 
+noWin:
+	tst (sp)+					;removing findMove cells from stack 
+	tst (sp)+					;removing findMove cells from stack 
+	tst (sp)+					;removing findMove cells from stack 
+	tst (sp)+					;removing findMove cells from stack 
+	cmp r3, #1					;checking if our player is white
+	beq whiteWP
+	br blackWP
+endCalc:
+	mov (sp)+, r3				;restore the environment balance
+	mov (sp)+, r2				;restore the environment balance
+	mov (sp)+, r1				;restore the environment balance
+	mov (sp)+, r0				;restore the environment balance
+	rts pc	
+
+whiteWP:
+	mov r1, r4					;moving white pieces to r4
+	sub r2, r4					;subtracting black pieces from white
+	br endCalc
+blackWP:
+	mov r2, r4					;moving black piece to r4
+	sub r1, r4					;subtracting white pieces from r4
+	br endCalc
+
+
+;checkWin - will return if the given player has won or not (not winning doesnt mean losing)	
+;call line: jsr pc, checkWin	
+;input: in stack (Board by address, Player by value)
+;output: will be updated in stack
+
+checkWin:
+	mov r4, -(sp)				;keeping the environment balanced
+	mov 6(sp), -(sp)			;current board status - by address in stack
+	mov 6(sp), -(sp)			;current player - by value in stack
+	jsr pc, calcWP				;call to calcWP
+	tst (sp)+					;removing useless values from stack
+	tst (sp)+					;removing useless values from stack
+	mov #1, 10(sp)				;moving the return value to the output
+	cmp r4, #20					;check if current player has won
+	bne notWin					;if its not equal to 20 then he hasnt won
+	mov (sp)+, r4				;restore the environment balance
+	rts pc
+notWin:
+	mov #-1, 10(sp)				;if the player hasnt won mov -1 to output
+	mov (sp)+, r4				;restore the environment balance
+	rts pc
+	
+
+;call line: jsr pc, minOrMax	
+;minOrMax - will return 1 if the current player is the global player -1 otherwise
+;input: in stack (current player by value, global player by address)
+;output: in r4
+minOrMax:				
+	mov #1, r4			;mov 1 to output result				
+	cmp @2(sp), 4(sp) 	;comparing the global player to the current player
+	beq endMOM			;if they are equal we have updated the result lets end
+	mov #-1, r4			;else return -1
+endMOM:
+	rts pc		
+	
+
+;findEat - will return wheter there was a eating move within the src and pos inputs	
+;call line: jsr pc, findEat	
+;input: in stack (src position, dst position)
+;output: in stack (will be updated in the given cell)
+findEat:
+	mov 4(sp), 6(sp)		;move destination to stack
+	sub 2(sp), 6(sp)		;sub source from destination
+	add #1, 6(sp)			;add 1 to swich evency
+	bic #177776, 6(sp)		;clearing all bits from the output but the last one, if its 1 there was a eating if its 0 there wasnt
+	rts pc
+
+
+movPiece:
+	mov r0, -(sp)		;keeping the environment balanced
+	mov r1, -(sp)		;keeping the environment balanced
+	mov #0, -(sp)		;inserting cell for output for findEat
+	mov (r5)+, -(sp)	;Source position inline input
+	mov (r5)+, -(sp)	;destination position inline input
+	jsr pc, findEat
+	mov (sp)+, r1		;moving the destination position input to r1
+	mov (sp)+, r0		;moving the source position input to r0
+	asl r1				;multiplying by 2 (thats the way word addresses works)
+	asl r0				;multiplying by 2 (thats the way word addresses works)
+	add 10(sp), r0		;adding the start board address to the multiplied index will give the index address
+	add 10(sp), r1		;adding the start board address to the multiplied index will give the index address
+	mov (r0), (r1)		;move the unit
+	mov #0, (r0)		;clear the source position
+	cmp (sp)+, #0		;if its not equal to zero then there was a eating move (this is the return from findEat)
+	bne eat				;if its not equal handle this case
+	mov (sp)+, r1		;restore the environment balance
+	mov (sp)+, r0		;restore the environment balance
+	rts r5			
+eat:
+	mov r3, -(sp)		;keeping the environment balanced
+	mov r0, r3			;moving source position to r3
+	add r1, r3			;moving the destination position to r3
+	asr r3				;divide by 2, so this should be the eaten piece address
+	mov #0, (r3)		;clear eaten piece from the board
+	mov (sp)+, r3		;restore the environment balance
+	mov (sp)+, r1		;restore the environment balance
+	mov (sp)+, r0		;restore the environment balance
+	rts r5	
+	
+;restoreMov - will restore a given move that have been done by movPiece
+;call line: jsr r5, restoreMov
+;input: in stack (Board) , inline (source position, destination position)
+;output: the board will be updated
+restoreMov:
+	mov r0, -(sp)				;keeping the environment balanced
+	mov r1, -(sp)				;keeping the environment balanced
+	mov #0, -(sp)				;giving cell for output for findEat
+	mov (r5)+, -(sp)			;reading inline parameter src
+	mov (r5)+, -(sp)			;reading inline parameter dst
+	jsr pc, findEat	
+	mov (sp)+, r1				;assigning dst to r1
+	mov (sp)+, r0				;assignin src to r0
+	asl r1						;multiplying by 2 (thats how word works)
+	asl r0						;multiplying by 2 (thats how word works)
+	add 10(sp), r0				;adding the start of the board to the double index will give the address
+	add 10(sp), r1				;adding the start of the board to the double index will give the address
+	mov (r1), (r0)				;move the unit found in destination to source
+	mov #0, (r1)				;clear the destination
+	tst (sp)+					;check if it was a eating move
+	bne resEat					;if so restore the eating move
+	mov (sp)+, r1				;restore the environment balance
+	mov (sp)+, r0				;restore the environment balance
+	rts r5						
+resEat:
+	mov r2, -(sp)				;keeping the environment balanced
+	mov (r0), -(sp)				;insert the player to stack
+	mov r1, r2					;source address
+	sub r0, r1					;calculating distance to move 
+	sxt r0				
+	div #2, r0					;distance to eat piece
+	sub r0, r2					;get eaten address
+	mov #3, (r2)				;insert the number 3
+	sub (sp)+, (r2)				;sub the moving player and we are left with the opposite one
+	mov (sp)+, r2				;restore the environment balance
+	mov (sp)+, r1				;restore the environment balance
+	mov (sp)+, r0				;restore the environment balance
+	rts r5	
+
+	
+;changPlayer - will change the player in stack	
+;call line: jsr pc, restoreMov
+;input: in stack (player by value)
+;output: in stack (same cell have been updated)
+
+changePlayer: 
+	cmp #1,2(sp)		;compare the value in the stack to 1 - check if the player is white	
+	beq ToBlack			;if the player is white - go to label changeToBlack	
+	br ToWhite			;else - go to label changeToWhite
+			  
+ToBlack:
+	mov #2,2(sp)		;change the value to be 2 - means change to black player	
+	rts pc
+ToWhite:
+	mov #1,2(sp)		;change the value to be 1 - means change to white player	
+	rts pc	
+	
+	
+
+;innerRecurrsion - this is the main function that calculate the best move and its WP
+;call line: jsr pc, innerRecurrsion
+;input in stack (current player)
+;output: in stack (wp, dst, src)
+recursion:
+	mov r0, -(sp)				;keeping the environment balanced
+	mov r1, -(sp)				;keeping the environment balanced
+	mov r2, -(sp)				;keeping the environment balanced
+	mov r3, -(sp)				;keeping the environment balanced
+	mov r4, -(sp)				;keeping the environment balanced
+	mov r5, -(sp)				;keeping the environment balanced
+	mov 16(sp), r3				;moving current player to r3
+	mov #0, r4					;last src cleared to zero
+	mov #0, r5					;last dst cleared to zero
+	mov #1, r0					;checking if we have to search for max value
+	mov #-20, r1				;move -20 to r1 (wp value)
+	cmp r3, Player 				;cmp the global player to the current player
+	beq checkStop					;if they are equal the setup is ok
+	mov #-1, r0					;if not move -1 to r0
+	mov #20, r1					;change the start wp value to 20
+checkStop:	
+	tst Steps
+	beq back						;if there are no more steps go back
+	tst -(sp)					;inserting cell for checkWin output
+	mov #Board, -(sp)			;giving Board parameter to checkWin
+	mov r3, -(sp)				;giving current player parameter to checkWin
+	jsr pc, checkWin				;calling checkWin for calculations
+	cmp 4(sp), #1				;check if Win output
+	beq caseWon					;handle this case
+	jsr pc, changePlayer			;change player to check if he won
+	jsr pc, checkWin				;check the win of the opposite player
+	cmp 4(sp), #1				;check if Win output
+	beq caseWon					;if the opposite player won handle that case
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	bne checkMove
+	
+caseWon:				
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+back:					
+	mov r4, -(sp)				;keeping the environment balanced
+	mov #Board, -(sp)			;inserting calcWP input to stack - board
+	mov Player, -(sp)			;inserting calcWP input to stack - player by value
+	jsr pc, calcWP				;output will be updayed in r4
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	mov r4, 22(sp)				;move the calculted WP to output
+	mov (sp)+, r4				;restore the environment balance
+	mov r4, -(sp)				;insert input for findMove - src
+	mov r5, -(sp)				;insert input for findMove - dst
+	mov #Board, -(sp)			;insert input for findMove - board
+	mov r3, -(sp)				;insert input for findMove - current player
+	jsr pc, findMove				;get next move
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	mov (sp), 26(sp)			;assigning to output
+	mov (sp)+, 22(sp)			;assigning to output
+	jmp end
+
+checkMove:				
+	dec Steps					;decrease steps
+	mov r4, -(sp)				;insert input for findMove - src
+	mov r5, -(sp)				;insert input for findMove - dst
+	mov #Board, -(sp)			;insert input for findMove - board
+	mov r3, -(sp)				;insert input for findMove - current player
+	jsr pc, findMove				;get next move
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	mov (sp)+, r5				;assigning to output
+	mov (sp)+, r4				;assigning to output
+	cmp r4, r5					;check if there is a move
+	bne setUp					;if there are moves go to setUp
+	tst -(sp)					;inserting cells for output
+	tst -(sp)					;inserting cells for output
+	tst -(sp)					;inserting cells for output
+	mov r3, -(sp)				;inserting input - current Player
+	jsr pc, changePlayer			;changing the player for the next move
+	
+	mov timeEnded, -(sp)			;moving the timeEnded flag value to the stack
+	add done, (sp)				;adding the done flag value to the stack
+	cmp (sp)+, #0				;if the sum is not zero we have to escape the recurrsion
+	beq .+10
+	mov SaveLocation, sp			;moving the stack pointer to the return address
+	rts pc
+	
+	jsr pc, recursion				;calling the recursion
+	tst (sp)+ 					;remove opposite player from stack
+	mov (sp)+, r2				;move the new WP to r2
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	mov r2, r1					;assign new WP
+	mov r1, 20(sp)				;assign WP in output
+	mov r5, 22(sp)  			;assign destiation in output
+	mov r4, 24(sp)  			;assign source in output
+	inc Steps					;increase back steps
+	jmp end						;then no more moves			
+
+setUp:				
+	mov #0, r4					;clear last src position
+	mov #0, r5					;clear last dst position
+	inc Steps					;increase back steps
+	
+loop2:				
+	dec Steps					;decrease steps
+	mov r4, -(sp)				;insert input for findMove - src
+	mov r5, -(sp)				;insert input for findMove - dst
+	mov #Board, -(sp)			;insert input for findMove - board
+	mov r3, -(sp)				;insert input for findMove - current player
+	jsr pc, findMove			;get next move
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	mov (sp)+, r5				;assign output dst to r5
+	mov (sp)+, r4				;assign output src to r4
+	mov r4, src1					;inserting input for movPiece - src
+	mov r5, dst1					;inserting input for movPiece - dst
+	cmp r4, r5					;checking if there are more moves
+	beq restore					;if not end
+	mov #Board, -(sp)			;inserting input for movPiece - board
+	jsr r5, movPiece		
+	src1:.word 0
+	dst1:.word 0
+	tst -(sp)
+	tst -(sp)					
+	mov r3, -(sp)				;inserting player to stack in order to change it
+	jsr pc, changePlayer			;changing the player for the next step
+	
+	mov timeEnded, -(sp)			;moving the timeEnded flag value to the stack
+	add done, (sp)				;adding the done flag value to the stack
+	cmp (sp)+, #0				;if the sum is not zero we have to escape the recurrsion
+	beq .+10
+	mov SaveLocation, sp			;moving the stack pointer to the return address
+	rts pc
+	
+	jsr pc, recursion				;call the recursion again
+	tst (sp)+ 					;remove opposite player from stack
+	mov (sp)+, r2				;move new WP to r2
+	tst (sp)+					;remove input cells from stack
+	tst (sp)+					;remove input cells from stack
+	cmp r0, #0					;check min or max
+	bgt max					
+	cmp r2, r1					;compate to our best wp so far
+	blt	change					;if its lower change it
+	br restore
+max:cmp r2, r1					;cmp to our best WP so far
+	bgt	change					;if greater change it
+	br restore
+change:							
+	mov r2, r1					;assign the last WP to r1
+	mov r1, 20(sp)				;assign the WP in output
+	mov r5, 22(sp)  			;assign destination in output
+	mov r4, 24(sp)  			;assign source in output
+restore:				
+	inc Steps					;increase steps
+	cmp r4, r5					;check if there was no move
+	beq end						;then we are done		
+	mov r4, src2					;inserting input for movPiece - src
+	mov r5, dst2					;inserting input for movPiece - dst
+	mov #Board, -(sp)			;inserting input for movPiece - board
+	jsr r5, restoreMov
+	src2:.word 0					;move to undo
+	dst2:.word 0
+	tst (sp)+
+	br loop2						;check next move
+
+end:					
+	cmp 24(sp), #0				;if the src is 0 there was no move, we should point the a unit
+	bne return					;if not zero return from the function
+noMove:							
+	mov r4, -(sp)				;saving r4 for restoring later
+	mov #Board, -(sp)			;giving calcWP its input board
+	mov Player, -(sp)			;giving calcWP its input Player by value
+	jsr pc, calcWP				;will calculate WP and assign to r4
+	tst (sp)+					;remove input values from stack
+	tst (sp)+
+	mov r4, 22(sp)				;assign new WP to output
+	mov (sp)+, r4				;restore r4
+	mov r5, 22(sp)  			;assign destination in output
+	mov r4, 24(sp)  			;assign source in output
+return:
+	mov (sp)+, r5				;restore the environment balance
+	mov (sp)+, r4				;restore the environment balance
+	mov (sp)+, r3				;restore the environment balance
+	mov (sp)+, r2				;restore the environment balance
+	mov (sp)+, r1				;restore the environment balance
+	mov (sp)+, r0				;restore the environment balance
+	rts pc	
+
+;-------------------------------------------------------------------------------------------end of HW3-------------------------------------------------------------------------------------	
+	
+	
+;-----------------------------------------------Boards-------------------------------------------------------------------------
+	
+	
+iniBoard:
+.word 0, 2, 0, 2, 0, 2, 0, 2
+.word 2, 0, 2, 0, 2, 0, 2, 0
+.word 0, 2, 0, 2, 0, 2, 0, 2
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 1, 0, 1, 0, 1, 0, 1, 0
+.word 0, 1, 0, 1, 0, 1, 0, 1
+.word 1, 0, 1, 0, 1, 0, 1, 0
+			
+backUpBoard:
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 0, 0, 0, 0, 0, 2, 0, 0
+.word 0, 0, 0, 0, 1, 0, 0, 0
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 0, 0, 0, 0, 0, 0, 0, 0			
+			
+Board:
+.word 0, 2, 0, 2, 0, 2, 0, 2
+.word 2, 0, 2, 0, 2, 0, 2, 0
+.word 0, 2, 0, 2, 0, 2, 0, 2
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 0, 0, 0, 0, 0, 0, 0, 0
+.word 1, 0, 1, 0, 1, 0, 1, 0
+.word 0, 1, 0, 1, 0, 1, 0, 1
+.word 1, 0, 1, 0, 1, 0, 1, 0
+
+
+;--------------------------------------------------------------------------------------------------------------------------------
+
+;first player can move up, so we go back in the addresses, -22 for a left step and -16 for a right step
+WhitePlayerMov: .word -22, -16
+;second player can move down, so we forward in the addresses, 16 for a left step and 22 for a right step
+BlackPlayerMov: .word 16, 22
+
+Player:.word 1
+Steps:.word 1
+
+
+;output
+SrcPos: .blkw 1
+DstPos: .blkw 1
+WinParam: .blkw 1 
+
+;flags:
+timeEnded: .word 0
+CP: .word 1
+done: .word 0
+INPallowed: .word 1
+SaveLocation:	.word 0
+stop: .word 1
+
+;-------------------------------------------------------Pre set Messages----------------------------------------------------------
+
+
+msgWelcome:
+	.word 61
+	.ascii <Welcome to 204512396 and 307965806 checkers game!>
+	.even
+	
+msg$:
+	.word 2
+	.ascii <$ >
+	.even
+
+msg3:
+	.word 8
+	.ascii <and tal >
+	.even 
+	
+newLine:
+	.word 2
+	.byte 12, 15 
+	
+msgB:
+	.word 1
+	.ascii <B>
+	.even 
+
+msgW:
+	.word 1
+	.ascii <W>
+	.even
+
+msg_:
+	.word 1
+	.ascii <_>
+	.even 
+	
+input:
+	.blkw 1
+	.blkw 36
+	.even 
+	
+error:
+	.word 20
+	.ascii <Cannot Execute ">
+	.even
+	
+msgQuat:
+	.word 1
+	.ascii <">
+	.even 
+	
+
+number:
+	.blkw 1
+	.blkw 31
+	.even 
+	
+player1:
+	.byte 1
+	.even
+	
+player2:
+	.byte 1
+	.even
+	
+msgTime1:
+	.blkw 1
+	.word 20
+	.even
+
+msgTime2:
+	.blkw 1
+	.word 20
+	.even
+	
+octTime1:
+	.blkw 1
+	.even
+	
+octTime2:
+	.blkw 1
+	.even
+
+msgComputer:
+	.word 10
+	.ascii <Computer>
+	.even
+	
+msgHuman:
+	.word 5
+	.ascii<Human>
+	.even
+	
+msgStarting:
+	.word 23
+	.ascii <Starting a new game>
+	.even
+	
+msgWhite:
+	.word 5
+	.ascii<White>
+	.even
+	
+msgwhite:
+	.word 5
+	.ascii <white>
+	.even
+
+msgBlack:
+	.word 5
+	.ascii<Black>
+	.even
+	
+msgblack:
+	.word 5
+	.ascii<black>
+	.even
+	
+playerIs:
+	.word 14
+	.ascii< player is >
+	.even
+	
+msgWith:
+	.word 6
+	.ascii< with >
+	.even
+	
+msgPerMov:
+	.word 21
+	.ascii< seconds per move>
+	.even 
+	
+stage:
+	.word 0
+	.even
+	
+moveLabel:
+	.word 4
+	.blkw 2
+	.even 
+	
+
+wpValue:
+	.word 20
+	.even 
+	
+msgWP:
+	.blkw 1
+	.blkw 4
+	.even 
+	
+msgWPfor:
+	.word 7
+	.ascii<WP for >
+	.even
+	
+msgPlayerWins:
+	.word 15
+	.ascii< player wins!>
+	.even
+	
+msgTie:
+	.word 13
+	.ascii<It's a tie!>
+	.even
+	
+	
+partSec:
+	.blkw 1
+	.even
+	
+msgNoTime:
+	.word 37
+	.ascii<Human is out of time.Game Over.>
+	.even
+msgLayout:
+	.word 15
+	.ascii<Board layout:>
+	.even
+
+msgCurrent:
+	.word 20
+	.ascii<Current Player: >
+	.even
+	
+msgSpace:
+	.word 1
+	.ascii< >
+	.even
+	
+	
+timeLeft:
+	.blkw 4
+	.even
+	
+msgRightTime:
+	.word 1
+	.word 1
+	.even
+	
+msgTimeLeft:
+	.blkw 1
+	.blkw 12
+	.even
+	
+msgTIme:
+	.word 13
+	.ascii <Time left: >
+	.even
+	
+msgSeconds:
+	.word 10
+	.ascii < seconds>
+	.even
+	
+msgPoint:
+	.word 1
+	.ascii <.>
+	.even
+	
+msgMoveTook:
+	.word 13
+	.ascii< move took >
+	.even
+
+
+
+
+
